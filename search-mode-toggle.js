@@ -1,9 +1,10 @@
 // == TypingMind Extension: Search-mode toggle =============================
-// v0.9 – 2025-10-13
+// v1.5 – 2025-10-13
 (() => {
 
   const STORAGE_KEY           = 'TM_searchModeOn';
   const MODELS_SEARCH_SUPPORT = 'TM_modelsSearchSupport';
+  const MODEL_NAME_TO_ID      = 'TM_modelNameToId';
   const SEARCH_SUFFIX         = ':search';
 
   
@@ -11,6 +12,21 @@
   const isOn  = ()    => localStorage.getItem(STORAGE_KEY) === 'true';
   const setOn = v     => localStorage.setItem(STORAGE_KEY, v);
   
+  const getModelNameMapping = () => {
+    const data = localStorage.getItem(MODEL_NAME_TO_ID);
+    return data ? JSON.parse(data) : {};
+  };
+  const setModelNameMapping = (displayName, modelId) => {
+    const mapping = getModelNameMapping();
+    mapping[displayName] = modelId;
+    localStorage.setItem(MODEL_NAME_TO_ID, JSON.stringify(mapping));
+    log(`🔗 Mapped "${displayName}" → "${modelId}"`);
+  };
+  const getModelIdFromName = (displayName) => {
+    const mapping = getModelNameMapping();
+    return mapping[displayName] || null;
+  };
+
   const getSearchSupportedModels = () => {
     const data = localStorage.getItem(MODELS_SEARCH_SUPPORT);
     return data ? JSON.parse(data) : {};
@@ -19,38 +35,43 @@
     const models = getSearchSupportedModels();
     models[modelId] = supported;
     localStorage.setItem(MODELS_SEARCH_SUPPORT, JSON.stringify(models));
-    log(`Model "${modelId}" search support set to:`, supported);
-    updateSwitchVisibility();
+    log(`✅ Model "${modelId}" search support set to:`, supported);
+    setTimeout(checkAndUpdateSwitch, 200);
   };
   const isModelSearchSupported = (modelId) => {
-    const supported = getSearchSupportedModels()[modelId] === true;
-    log(`Checking if model "${modelId}" supports search:`, supported);
-    return supported;
+    if (!modelId) return false;
+    return getSearchSupportedModels()[modelId] === true;
   };
 
-  let lastCheckedModel = null;
+  const getCurrentModelFromButton = () => {
+    const buttons = document.querySelectorAll('button[id^="headlessui-menu-button-"]');
+    
+    for (const button of buttons) {
+      const modelSpan = button.querySelector('span.truncate');
+      if (modelSpan) {
+        const displayName = modelSpan.textContent?.trim();
+        if (displayName) {
+          const modelId = getModelIdFromName(displayName);
+          if (modelId) {
+            log('🎯 Found model:', displayName, '→', modelId);
+            return modelId;
+          } else {
+            log('⚠️ Display name found but no mapping:', displayName);
+          }
+        }
+      }
+    }
+    return null;
+  };
+
   const getCurrentModel = () => {
     try {
-      const chatSettings = localStorage.getItem('typingmind_chat_settings');
-      if (chatSettings) {
-        const settings = JSON.parse(chatSettings);
-        if (settings.model) return settings.model;
-      }
-
-      const modelSelector = document.querySelector('[data-element-id="model-selector"]');
-      if (modelSelector) {
-        const selectedModel = modelSelector.textContent?.trim();
-        if (selectedModel) return selectedModel;
-      }
-
-      const activeChats = localStorage.getItem('typingmind_chats');
-      if (activeChats) {
-        const chats = JSON.parse(activeChats);
-        const activeChat = chats.find(c => c.id === localStorage.getItem('typingmind_active_chat_id'));
-        if (activeChat?.model) return activeChat.model;
-      }
+      const model = getCurrentModelFromButton();
+      if (model) return model;
+      
+      log('⚠️ No model detected from button');
     } catch (err) {
-      log('Error getting current model', err);
+      log('❌ Error getting current model', err);
     }
     return null;
   };
@@ -61,15 +82,23 @@
     try {
       if (typeof input === 'string' && /\/chat\/completions/.test(input) && init.body) {
         const body = JSON.parse(init.body);
+        const originalModel = body.model;
+        
         if (isOn()) {
-          if (!body.model.endsWith(SEARCH_SUFFIX)) body.model += SEARCH_SUFFIX;
+          if (!body.model.endsWith(SEARCH_SUFFIX)) {
+            body.model += SEARCH_SUFFIX;
+            log('🔍 Added :search suffix:', originalModel, '→', body.model);
+          }
         } else {
           body.model = body.model.replace(new RegExp(SEARCH_SUFFIX + '$'), '');
+          if (originalModel !== body.model) {
+            log('🔍 Removed :search suffix:', originalModel, '→', body.model);
+          }
         }
         init.body = JSON.stringify(body);
       }
     } catch (err) {
-      log('fetch patch error', err);
+      log('❌ fetch patch error', err);
     }
     return nativeFetch.call(this, input, init);
   };
@@ -79,18 +108,19 @@
     const container = document.createElement('div');
     container.id = 'tm-search-toggle-container';
     container.style.cssText = `
-      display: none;
+      display: inline-flex;
       align-items: center;
       gap: 8px;
       margin-left: 12px;
     `;
-    container.title = 'Toggle :search sub-model (Alt+S)';
 
     const label = document.createElement('span');
+    label.id = 'tm-search-icon';
     label.textContent = '🔍';
     label.style.cssText = `
       font-size: 16px;
       user-select: none;
+      transition: all 0.3s;
     `;
 
     const switchWrapper = document.createElement('label');
@@ -147,6 +177,7 @@
     input.onchange = () => {
       setOn(input.checked);
       updateSwitch();
+      log('🔍 Search mode:', input.checked ? 'ON' : 'OFF');
     };
 
     switchWrapper.appendChild(input);
@@ -157,11 +188,8 @@
 
     document.addEventListener('keydown', e => {
       if (e.altKey && e.key.toLowerCase() === 's') {
-        const currentModel = getCurrentModel();
-        if (currentModel && isModelSearchSupported(currentModel)) {
-          input.checked = !input.checked;
-          input.onchange();
-        }
+        input.checked = !input.checked;
+        input.onchange();
       }
     });
 
@@ -169,27 +197,40 @@
     return container;
   }
 
-  function updateSwitchVisibility() {
+  let lastDisplayedModel = null;
+  function checkAndUpdateSwitch() {
     const switchContainer = document.getElementById('tm-search-toggle-container');
-    if (!switchContainer) return;
+    const icon = document.getElementById('tm-search-icon');
+    
+    if (!switchContainer || !icon) return;
 
     const currentModel = getCurrentModel();
     
-    if (currentModel === lastCheckedModel) return;
-    lastCheckedModel = currentModel;
+    if (currentModel === lastDisplayedModel) {
+      return;
+    }
 
-    log('Current model detected:', currentModel);
+    lastDisplayedModel = currentModel;
+    log('🔄 Current model:', currentModel);
+    log('📋 Models with search support:', Object.keys(getSearchSupportedModels()));
 
-    if (currentModel && isModelSearchSupported(currentModel)) {
-      log('Showing search switch for model:', currentModel);
-      switchContainer.style.display = 'inline-flex';
+    const isSupported = currentModel && isModelSearchSupported(currentModel);
+
+    if (isSupported) {
+      icon.textContent = '🔍';
+      icon.style.filter = 'none';
+      switchContainer.title = 'Toggle :search sub-model (Alt+S)';
+      log('✅ Model supports :search');
     } else {
-      log('Hiding search switch');
-      switchContainer.style.display = 'none';
+      icon.textContent = '⚠️';
+      icon.style.filter = 'hue-rotate(0deg) saturate(2)';
+      icon.style.color = '#dc2626'; 
+      switchContainer.title = 'Might not be supported on this model';
+      log('⚠️ Model might not support :search');
     }
   }
 
-  function createModalSwitch(currentModelId) {
+  function createModalSwitch(currentModelId, currentModelName) {
     const switchContainer = document.createElement('div');
     switchContainer.className = 'flex items-center justify-start';
     switchContainer.id = 'tm-search-modal-switch';
@@ -245,6 +286,9 @@
         : 'translate-x-0 h-5 w-5 pointer-events-none inline-block transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out';
 
       setModelSearchSupport(currentModelId, newState);
+      if (currentModelName) {
+        setModelNameMapping(currentModelName, currentModelId);
+      }
     };
 
     return switchContainer;
@@ -260,9 +304,16 @@
     if (modal.querySelector('#tm-search-modal-switch')) return;
 
     const modelIdInput = modal.querySelector('input[placeholder="e.g., ggml-gpt4all-j-v1.3-groovy.bin"]');
+    const modelNameInput = modal.querySelector('input[placeholder="e.g., GPT4All"]');
+    
     if (!modelIdInput || !modelIdInput.value) return;
 
     const currentModelId = modelIdInput.value;
+    const currentModelName = modelNameInput?.value || null;
+
+    if (currentModelName) {
+      setModelNameMapping(currentModelName, currentModelId);
+    }
 
     const capabilitiesSection = Array.from(modal.querySelectorAll('h3')).find(h3 => 
       h3.textContent === 'Model Capabilities'
@@ -275,15 +326,15 @@
     
     if (!switchesContainer) return;
 
-    const searchSwitch = createModalSwitch(currentModelId);
+    const searchSwitch = createModalSwitch(currentModelId, currentModelName);
     switchesContainer.appendChild(searchSwitch);
-    log('Search support switch injected into modal');
+    log('✅ Search support switch injected into modal');
+    log('📝 Model ID:', currentModelId, '| Name:', currentModelName);
   }
 
- 
   const switchObserver = new MutationObserver(() => {
     if (document.getElementById('tm-search-toggle-container')) {
-      updateSwitchVisibility();
+      checkAndUpdateSwitch();
       return;
     }
     
@@ -298,8 +349,8 @@
     
     if (pluginContainer) {
       pluginContainer.parentElement.insertBefore(makeSwitch(), pluginContainer.nextSibling);
-      log('Toggle switch injected');
-      updateSwitchVisibility();
+      log('✅ Toggle switch injected (always visible)');
+      setTimeout(checkAndUpdateSwitch, 300);
     }
   });
   switchObserver.observe(document.body, {subtree: true, childList: true});
@@ -309,30 +360,10 @@
   });
   modalObserver.observe(document.body, {subtree: true, childList: true});
 
-  window.addEventListener('storage', (e) => {
-    if (e.key === 'typingmind_chat_settings' || e.key === MODELS_SEARCH_SUPPORT) {
-      lastCheckedModel = null; 
-      updateSwitchVisibility();
-    }
-  });
+  setInterval(checkAndUpdateSwitch, 1000);
+  document.addEventListener('click', () => setTimeout(checkAndUpdateSwitch, 300));
 
-  const originalSetItem = localStorage.setItem;
-  localStorage.setItem = function(key, value) {
-    originalSetItem.apply(this, arguments);
-    if (key === 'typingmind_chat_settings' || key === MODELS_SEARCH_SUPPORT) {
-      lastCheckedModel = null;
-      setTimeout(updateSwitchVisibility, 100);
-    }
-  };
-
-  setInterval(() => {
-    updateSwitchVisibility();
-  }, 500);
-
-  log('extension loaded');
-  
-  setTimeout(() => {
-    updateSwitchVisibility();
-    log('Initial visibility check completed');
-  }, 1000);
+  log('🚀 Extension loaded (always visible with warning state)');
+  log('💡 Open model settings to create name→ID mapping');
+  setTimeout(checkAndUpdateSwitch, 1500);
 })();
