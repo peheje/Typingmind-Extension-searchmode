@@ -1,10 +1,10 @@
 // == TypingMind Extension: Search-mode toggle =============================
-// v0.2 – 2025-10-13
+// v0.3 – 2025-10-13
 (() => {
 
   const STORAGE_KEY     = 'TM_searchModeOn';
   const SEARCH_SUFFIX   = ':search';
-  const SEND_BTN_SEL    = '[data-element-id="composer-send-button"]'; 
+  const SEND_BTN_SEL    = '[data-element-id="send-button"]'; 
 
   
   const log   = (...m) => console.log('[Search-mode]', ...m);
