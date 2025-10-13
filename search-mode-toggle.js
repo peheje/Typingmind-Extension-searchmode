@@ -1,58 +1,64 @@
 // == TypingMind Extension: Search-mode toggle =============================
-// V0.1.0
+// v0.2 – 2025-10-13
 (() => {
-  const STORAGE_KEY = 'TM_searchModeOn';          
-  const COMPLETIONS_REGEX = /\/v\d+\/chat\/completions/; 
-  const SEARCH_SUFFIX = ':search';
 
+  const STORAGE_KEY     = 'TM_searchModeOn';
+  const SEARCH_SUFFIX   = ':search';
+  const SEND_BTN_SEL    = '[data-element-id="composer-send-button"]'; 
 
-  const isOn = () => localStorage.getItem(STORAGE_KEY) === 'true';
-  const setOn = v => localStorage.setItem(STORAGE_KEY, v);
+  
+  const log   = (...m) => console.log('[Search-mode]', ...m);
+  const isOn  = ()    => localStorage.getItem(STORAGE_KEY) === 'true';
+  const setOn = v     => localStorage.setItem(STORAGE_KEY, v);
 
-  const origFetch = window.fetch;
-  window.fetch = function (input, init = {}) {
+ 
+  const nativeFetch = window.fetch;
+  window.fetch = async function (input, init = {}) {
     try {
-      if (typeof input === 'string' && COMPLETIONS_REGEX.test(input) && init.body) {
-        const payload = JSON.parse(init.body);
-
+      if (typeof input === 'string' && /\/chat\/completions/.test(input) && init.body) {
+        const body = JSON.parse(init.body);
         if (isOn()) {
-          if (!payload.model.endsWith(SEARCH_SUFFIX)) payload.model += SEARCH_SUFFIX;
+          if (!body.model.endsWith(SEARCH_SUFFIX)) body.model += SEARCH_SUFFIX;
         } else {
-          payload.model = payload.model.replace(new RegExp(`${SEARCH_SUFFIX}$`), '');
+          body.model = body.model.replace(new RegExp(SEARCH_SUFFIX + '$'), '');
         }
-        init.body = JSON.stringify(payload);
+        init.body = JSON.stringify(body);
       }
-    } catch (e) {
-      console.warn('[Search-mode] failed to patch payload', e);
+    } catch (err) {
+      log('fetch patch error', err);
     }
-    return origFetch.call(this, input, init);
+    return nativeFetch.call(this, input, init);
   };
 
-  function makeToggleBtn(templateBtn) {
+ 
+  function makeButton(template) {
     const btn = document.createElement('button');
-    btn.id = 'tm-search-toggle';
-    btn.className = templateBtn.className;
-    btn.style.marginLeft = '6px';
-    btn.title = 'Toggle :search sub-model';
-    btn.textContent = '🔍';                      
-
-    const refreshStyle = () => {
+    btn.id    = 'tm-search-toggle';
+    btn.className = template.className;   
+    btn.style.marginRight = '4px';
+    btn.textContent = '🔍';
+    btn.title = 'Toggle :search sub-model (Alt+S)';
+    const paint = () => {
       btn.style.backgroundColor = isOn() ? 'rgb(59 130 246)' : '';
       btn.style.color           = isOn() ? '#fff'            : '';
     };
-    refreshStyle();
-
-    btn.onclick = () => { setOn(!isOn()); refreshStyle(); };
+    btn.onclick = () => { setOn(!isOn()); paint(); };
+    paint();
+    document.addEventListener('keydown', e => {
+      if (e.altKey && e.key.toLowerCase() === 's') { btn.click(); }
+    });
     return btn;
   }
 
-  const POLL_MS = 600;
-  const poll = setInterval(() => {
-    const sendBtn = document.querySelector('button[data-element-id="send-message-button"]');
-    if (sendBtn && !document.getElementById('tm-search-toggle')) {
-      sendBtn.parentElement.insertBefore(makeToggleBtn(sendBtn), sendBtn);
+ 
+  const observer = new MutationObserver(() => {
+    const send = document.querySelector(SEND_BTN_SEL);
+    if (send && !document.getElementById('tm-search-toggle')) {
+      send.parentElement.insertBefore(makeButton(send), send);
+      log('Toggle button injected');
     }
-  }, POLL_MS);
+  });
+  observer.observe(document.body, {subtree: true, childList: true});
 
-  window.addEventListener('beforeunload', () => clearInterval(poll));
+  log('extension loaded');
 })();
