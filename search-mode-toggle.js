@@ -38,7 +38,7 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      margin-right: 12px;
+      margin-left: 12px;
     `;
     container.title = 'Toggle :search sub-model (Alt+S)';
 
@@ -126,7 +126,7 @@
   const observer = new MutationObserver(() => {
     const pluginBtn = document.querySelector(PLUGIN_BTN_SEL);
     if (pluginBtn && !document.getElementById('tm-search-toggle-container')) {
-      pluginBtn.parentElement.insertBefore(makeSwitch(), pluginBtn);
+      pluginBtn.parentElement.insertBefore(makeSwitch(), pluginBtn.nextSibling);
       log('Toggle switch injected');
     }
   });
