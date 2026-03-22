@@ -56,10 +56,10 @@
 
     const active = isOn();
     button.setAttribute('aria-pressed', String(active));
-    button.style.background = active ? '#0f766e' : '#f3f4f6';
-    button.style.color = active ? '#ffffff' : '#111827';
-    button.style.borderColor = active ? '#0f766e' : '#d1d5db';
-    button.textContent = active ? 'Web Search: ON' : 'Web Search: OFF';
+    button.setAttribute('data-tooltip-content', active ? 'Disable web search (Alt+S)' : 'Enable web search (Alt+S)');
+    button.setAttribute('title', active ? 'Web search is on' : 'Web search is off');
+    button.style.backgroundColor = active ? '#2563eb' : 'transparent';
+    button.style.color = active ? '#ffffff' : '';
   }
 
   function toggleMode(forceValue) {
@@ -72,25 +72,16 @@
   function createToggle() {
     const container = document.createElement('div');
     container.id = CONTAINER_ID;
-    container.title = 'Toggle OpenRouter web search (:online) (Alt+S)';
+    container.style.cssText = 'display: inline-flex; align-items: center; flex: 0 0 auto;';
 
     const button = document.createElement('button');
     button.id = BUTTON_ID;
     button.type = 'button';
-    button.style.cssText = [
-      'width: 100%',
-      'display: inline-flex',
-      'align-items: center',
-      'justify-content: center',
-      'padding: 10px 12px',
-      'border: 1px solid #d1d5db',
-      'border-radius: 12px',
-      'font: 600 13px/1.2 sans-serif',
-      'letter-spacing: 0.02em',
-      'cursor: pointer',
-      'box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08)',
-      'transition: background 120ms ease, color 120ms ease, border-color 120ms ease'
-    ].join(';');
+    button.className = 'relative focus-visible:outline-blue-600 h-9 w-9 rounded-lg justify-center items-center gap-1.5 inline-flex disabled:text-neutral-400 dark:disabled:text-neutral-500 text-slate-900 dark:text-white dark:hover:bg-white/20 dark:active:bg-white/25 hover:bg-slate-900/20 active:bg-slate-900/25 shrink-0';
+    button.setAttribute('aria-label', 'Toggle web search');
+    button.setAttribute('data-tooltip-id', 'global');
+    button.style.transition = 'background-color 120ms ease, color 120ms ease';
+    button.innerHTML = '<span class="sr-only">Toggle web search</span><svg class="w-5 h-5 flex-shrink-0" width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M9 1.75C5.00194 1.75 1.75 5.00194 1.75 9C1.75 12.9981 5.00194 16.25 9 16.25C12.9981 16.25 16.25 12.9981 16.25 9C16.25 5.00194 12.9981 1.75 9 1.75ZM14.6044 8.25H11.7798C11.7083 6.75716 11.3409 5.35959 10.7406 4.17484C12.6543 4.81806 14.1128 6.37968 14.6044 8.25ZM9 3.25C9.79129 4.40611 10.2595 6.21612 10.3285 8.25H7.67148C7.74051 6.21612 8.20871 4.40611 9 3.25ZM7.25945 4.17484C6.65915 5.35959 6.29171 6.75716 6.2202 8.25H3.39557C3.8872 6.37968 5.34571 4.81806 7.25945 4.17484ZM3.39557 9.75H6.2202C6.29171 11.2428 6.65915 12.6404 7.25945 13.8252C5.34571 13.1819 3.8872 11.6203 3.39557 9.75ZM9 14.75C8.20871 13.5939 7.74051 11.7839 7.67148 9.75H10.3285C10.2595 11.7839 9.79129 13.5939 9 14.75ZM10.7406 13.8252C11.3409 12.6404 11.7083 11.2428 11.7798 9.75H14.6044C14.1128 11.6203 12.6543 13.1819 10.7406 13.8252Z" fill="currentColor"/></svg>';
     button.addEventListener('click', () => toggleMode());
 
     renderButton(button);
@@ -99,16 +90,12 @@
   }
 
   function findPreferredHost() {
-    const newChatButton = document.querySelector('[data-element-id="new-chat-button-in-side-bar"]');
-    if (newChatButton && newChatButton.parentElement) return { host: newChatButton.parentElement, mode: 'sidebar' };
-    return null;
-  }
+    const thinkingButton = document.querySelector('[data-element-id="toggle-thinking-button"]');
+    if (thinkingButton && thinkingButton.parentElement) return { host: thinkingButton.parentElement, anchor: thinkingButton };
 
-  function applyContainerLayout(container, mode) {
-    if (mode === 'sidebar') {
-      container.style.cssText = 'margin-top: 8px; width: 100%;';
-      return;
-    }
+    const newChatButton = document.querySelector('[data-element-id="new-chat-button-in-side-bar"]');
+    if (newChatButton && newChatButton.parentElement) return { host: newChatButton.parentElement, anchor: newChatButton };
+    return null;
   }
 
   function mountToggle() {
@@ -120,13 +107,8 @@
       container = createToggle();
     }
 
-    applyContainerLayout(container, target.mode);
-
-    if (target.mode === 'sidebar') {
-      const anchor = target.host.querySelector('[data-element-id="new-chat-button-in-side-bar"]');
-      if (anchor && container.parentElement !== target.host) {
-        target.host.insertBefore(container, anchor.nextSibling);
-      }
+    if (target.anchor && container.parentElement !== target.host) {
+      target.host.insertBefore(container, target.anchor.nextSibling);
     }
   }
 
