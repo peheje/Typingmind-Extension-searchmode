@@ -19,6 +19,8 @@ Example:
 
 The extension stores its toggle state locally and adds a `Web Search: ON/OFF` button in the app UI. It also supports the `Alt+S` shortcut.
 
+It skips appending `:online` for TypingMind's title-generation requests by detecting TypingMind's `<CHAT_HISTORY>` + title-prompt payload shape, so auto-generated chat titles do not accidentally trigger paid web-search variants.
+
 ## Notes
 
 - TypingMind loads extensions once when the app starts.
