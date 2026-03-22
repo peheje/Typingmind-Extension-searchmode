@@ -51,8 +51,7 @@
     return document.getElementById(BUTTON_ID);
   }
 
-  function renderButton() {
-    const button = getButton();
+  function renderButton(button = getButton()) {
     if (!button) return;
 
     const active = isOn();
@@ -94,15 +93,14 @@
     ].join(';');
     button.addEventListener('click', () => toggleMode());
 
+    renderButton(button);
     container.appendChild(button);
-    renderButton();
     return container;
   }
 
   function findPreferredHost() {
     const newChatButton = document.querySelector('[data-element-id="new-chat-button-in-side-bar"]');
     if (newChatButton && newChatButton.parentElement) return { host: newChatButton.parentElement, mode: 'sidebar' };
-    if (document.body) return { host: document.body, mode: 'floating' };
     return null;
   }
 
@@ -111,14 +109,6 @@
       container.style.cssText = 'margin-top: 8px; width: 100%;';
       return;
     }
-
-    container.style.cssText = [
-      'position: fixed',
-      'right: 16px',
-      'bottom: 16px',
-      'width: min(220px, calc(100vw - 32px))',
-      'z-index: 2147483647'
-    ].join(';');
   }
 
   function mountToggle() {
@@ -137,11 +127,6 @@
       if (anchor && container.parentElement !== target.host) {
         target.host.insertBefore(container, anchor.nextSibling);
       }
-      return;
-    }
-
-    if (container.parentElement !== document.body) {
-      document.body.appendChild(container);
     }
   }
 
@@ -153,13 +138,13 @@
   });
 
   const observer = new MutationObserver(() => {
-    mountToggle();
-    renderButton();
+    if (!document.getElementById(CONTAINER_ID)) {
+      mountToggle();
+    }
   });
 
   function start() {
     mountToggle();
-    renderButton();
     if (document.body) {
       observer.observe(document.body, { subtree: true, childList: true });
     }
