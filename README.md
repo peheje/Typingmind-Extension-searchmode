@@ -25,6 +25,8 @@ Recommended title-prompt prefix:
 
 - `[[tm-title-no-online]] Generate a short and relevant title for this chat based on the user message.`
 
+The marker is removed from the outbound request before it is sent, so OpenRouter logs and copied cURL payloads will show the cleaned prompt without `[[tm-title-no-online]]`.
+
 ## Notes
 
 - TypingMind loads extensions once when the app starts.
