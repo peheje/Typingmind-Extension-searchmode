@@ -7,7 +7,9 @@ It targets the textarea with `data-element-id="chat-input-textbox"`.
 ## What it does
 
 - Saves the current draft to `localStorage` with a short debounce while you type.
+- Mirrors drafts into TypingMind's built-in `TM_useDraftContent` storage for the current `#chat=` id.
 - Restores the draft when TypingMind reloads, as long as the textbox is empty.
+- Falls back to a global recovery draft so a lost new-chat prompt can still come back.
 - Clears the saved draft when TypingMind sends that same text to `/chat/completions`.
 - Rebinds itself automatically if TypingMind re-renders the page.
 
@@ -21,6 +23,6 @@ It targets the textarea with `data-element-id="chat-input-textbox"`.
 
 ## Notes
 
-- The draft is stored in `localStorage` under `TM_chatInputDraft`.
+- The extension uses `TM_chatInputDraft` as a global recovery key and also syncs with TypingMind's `TM_useDraftContent` map.
 - TypingMind loads extensions once when the app starts.
 - If the app becomes unusable, open TypingMind with `?safe_mode=1` to disable extensions temporarily.

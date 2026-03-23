@@ -1,9 +1,10 @@
 // == TypingMind Extension: Restore chat input draft ========================
 // Install in TypingMind using a pinned jsDelivr commit URL, for example:
 // https://cdn.jsdelivr.net/gh/peheje/Typingmind-Extension-searchmode@COMMIT_SHA/draft-restore/restore-draft.js
-// v0.2 - 2026-03-23
+// v0.3 - 2026-03-23
 (() => {
-  const STORAGE_KEY = 'TM_chatInputDraft';
+  const RECOVERY_STORAGE_KEY = 'TM_chatInputDraft';
+  const TYPINGMIND_DRAFTS_STORAGE_KEY = 'TM_useDraftContent';
   const TEXTAREA_SELECTOR = '[data-element-id="chat-input-textbox"]';
   const BOUND_ATTRIBUTE = 'data-tm-draft-restore-bound';
   const SAVE_DELAY_MS = 300;
@@ -11,6 +12,7 @@
 
   let saveTimerId = null;
   let lastBoundTextarea = null;
+  let lastSeenChatId = '';
   let lastSentDraft = '';
 
   const log = (...messages) => console.log('[TM Draft Restore]', ...messages);
@@ -20,31 +22,89 @@
     return value.trim().length > 0 ? value : '';
   }
 
-  function readDraft() {
+  function getCurrentChatId() {
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#chat=')) return '';
+
+    const params = new URLSearchParams(hash.slice(1));
+    return params.get('chat') || '';
+  }
+
+  function readRecoveryDraft() {
     try {
-      return localStorage.getItem(STORAGE_KEY) || '';
+      return localStorage.getItem(RECOVERY_STORAGE_KEY) || '';
     } catch (error) {
       log('storage read error', error);
       return '';
     }
   }
 
-  function writeDraft(value) {
+  function writeRecoveryDraft(value) {
     try {
       const normalizedValue = normalizeDraftValue(value);
 
       if (normalizedValue) {
-        localStorage.setItem(STORAGE_KEY, normalizedValue);
+        localStorage.setItem(RECOVERY_STORAGE_KEY, normalizedValue);
       } else {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(RECOVERY_STORAGE_KEY);
       }
     } catch (error) {
       log('storage write error', error);
     }
   }
 
-  function clearDraft() {
-    writeDraft('');
+  function readTypingMindDraftMap() {
+    try {
+      const rawValue = localStorage.getItem(TYPINGMIND_DRAFTS_STORAGE_KEY);
+      if (!rawValue) return {};
+
+      const parsedValue = JSON.parse(rawValue);
+      return parsedValue && typeof parsedValue === 'object' ? parsedValue : {};
+    } catch (error) {
+      log('typingmind draft map read error', error);
+      return {};
+    }
+  }
+
+  function writeTypingMindDraftMap(draftMap) {
+    try {
+      const entries = Object.entries(draftMap || {}).filter((entry) => normalizeDraftValue(entry[1]));
+
+      if (entries.length > 0) {
+        localStorage.setItem(TYPINGMIND_DRAFTS_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
+      } else {
+        localStorage.removeItem(TYPINGMIND_DRAFTS_STORAGE_KEY);
+      }
+    } catch (error) {
+      log('typingmind draft map write error', error);
+    }
+  }
+
+  function readTypingMindDraft(chatId = getCurrentChatId()) {
+    if (!chatId) return '';
+
+    const draftMap = readTypingMindDraftMap();
+    return typeof draftMap[chatId] === 'string' ? draftMap[chatId] : '';
+  }
+
+  function writeTypingMindDraft(value, chatId = getCurrentChatId()) {
+    if (!chatId) return;
+
+    const draftMap = readTypingMindDraftMap();
+    const normalizedValue = normalizeDraftValue(value);
+
+    if (normalizedValue) {
+      draftMap[chatId] = normalizedValue;
+    } else {
+      delete draftMap[chatId];
+    }
+
+    writeTypingMindDraftMap(draftMap);
+  }
+
+  function clearDraft(chatId = getCurrentChatId()) {
+    writeRecoveryDraft('');
+    writeTypingMindDraft('', chatId);
   }
 
   function getTextarea() {
@@ -68,8 +128,8 @@
     return Boolean(textarea && textarea !== getTextarea() && !textarea.isConnected);
   }
 
-  function persistTextareaValue(textarea = getTextarea()) {
-    if (!textarea || isStaleTextarea(textarea)) return;
+  function persistTextareaValue(textarea = getTextarea(), chatId = getCurrentChatId(), allowDetached = false) {
+    if (!textarea || (!allowDetached && isStaleTextarea(textarea))) return;
 
     if (saveTimerId) {
       window.clearTimeout(saveTimerId);
@@ -77,7 +137,6 @@
     }
 
     const value = textarea.value;
-
     if (lastSentDraft) {
       if (value.trim() === lastSentDraft.trim()) {
         return;
@@ -86,7 +145,8 @@
       lastSentDraft = '';
     }
 
-    writeDraft(value);
+    writeRecoveryDraft(value);
+    writeTypingMindDraft(value, chatId);
   }
 
   function schedulePersist(textarea) {
@@ -113,10 +173,13 @@
   function restoreDraftIfTextareaIsEmpty(textarea = getTextarea()) {
     if (!textarea || textarea.value.length > 0) return;
 
-    const draft = readDraft();
+    const currentChatId = getCurrentChatId();
+    const draft = readTypingMindDraft(currentChatId) || readRecoveryDraft();
     if (!normalizeDraftValue(draft)) return;
 
     setTextareaValue(textarea, draft);
+    writeTypingMindDraft(draft, currentChatId);
+    writeRecoveryDraft(draft);
 
     try {
       textarea.setSelectionRange(draft.length, draft.length);
@@ -129,6 +192,7 @@
     if (!textarea) return;
 
     if (textarea.getAttribute(BOUND_ATTRIBUTE) === 'true') {
+      lastSeenChatId = getCurrentChatId();
       lastBoundTextarea = textarea;
       return;
     }
@@ -139,6 +203,7 @@
     textarea.addEventListener('blur', () => persistTextareaValue(textarea));
 
     restoreDraftIfTextareaIsEmpty(textarea);
+    lastSeenChatId = getCurrentChatId();
     lastBoundTextarea = textarea;
     log('textarea bound');
   }
@@ -183,7 +248,7 @@
   }
 
   function maybeClearDraftFromRequest(bodyText) {
-    const savedDraft = readDraft();
+    const savedDraft = readRecoveryDraft();
     if (!savedDraft) return;
 
     const normalizedSavedDraft = savedDraft.trim();
@@ -221,7 +286,22 @@
     persistTextareaValue(textarea);
   }
 
+  function handleHashChange() {
+    if (lastBoundTextarea) {
+      persistTextareaValue(lastBoundTextarea, lastSeenChatId, true);
+    }
+
+    lastSeenChatId = getCurrentChatId();
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'hidden') {
+      handlePageHide();
+    }
+  }
+
   function start() {
+    lastSeenChatId = getCurrentChatId();
     bindTextarea(getTextarea());
 
     if (document.body) {
@@ -230,6 +310,8 @@
 
     window.addEventListener('pagehide', handlePageHide);
     window.addEventListener('beforeunload', handlePageHide);
+    window.addEventListener('hashchange', handleHashChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     log('extension loaded');
   }
 
