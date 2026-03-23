@@ -26,7 +26,7 @@
 
   function writeDraft(value) {
     try {
-      if (typeof value === 'string' && value.length > 0) {
+      if (typeof value === 'string' && value.trim().length > 0) {
         localStorage.setItem(STORAGE_KEY, value);
       } else {
         localStorage.removeItem(STORAGE_KEY);
@@ -93,7 +93,7 @@
     if (!textarea || textarea.value.length > 0) return;
 
     const draft = readDraft();
-    if (!draft) return;
+    if (!draft || draft.trim().length === 0) return;
 
     setTextareaValue(textarea, draft);
 
