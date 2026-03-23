@@ -78,6 +78,11 @@
       window.clearTimeout(saveTimerId);
     }
 
+    if (textarea.value.length === 0) {
+      persistTextareaValue(textarea);
+      return;
+    }
+
     saveTimerId = window.setTimeout(() => {
       saveTimerId = null;
       persistTextareaValue(textarea);
@@ -103,7 +108,6 @@
     if (!textarea) return;
 
     if (textarea.getAttribute(BOUND_ATTRIBUTE) === 'true') {
-      restoreDraftIfTextareaIsEmpty(textarea);
       lastBoundTextarea = textarea;
       return;
     }
