@@ -1,7 +1,7 @@
 // == TypingMind Extension: OpenRouter web search toggle ===================
 // Install in TypingMind using a pinned jsDelivr commit URL, for example:
 // https://cdn.jsdelivr.net/gh/peheje/Typingmind-Extension-searchmode@COMMIT_SHA/search-mode-toggle.js
-// v0.11 - 2026-03-26
+// v0.12 - 2026-03-26
 (() => {
   const STORAGE_KEY = 'TM_openRouterWebSearchOn';
   const MODEL_SUFFIX = ':online';
@@ -53,6 +53,15 @@
   `;
 
   const log = (...messages) => console.log('[TM Web Search]', ...messages);
+  let lastSeenChatId = '';
+
+  function getCurrentChatId() {
+    const hash = window.location.hash || '';
+    if (!hash.startsWith('#chat=')) return '';
+
+    const params = new URLSearchParams(hash.slice(1));
+    return params.get('chat') || '';
+  }
 
   function getWebSearchMode() {
     const storedValue = localStorage.getItem(STORAGE_KEY);
@@ -285,9 +294,15 @@
     log('web search mode', mode);
   }
 
+  function clearWebSearchMode(reason) {
+    if (getWebSearchMode() === SEARCH_MODE_OFF) return;
+    setWebSearchMode(SEARCH_MODE_OFF);
+    log('cleared web search mode', reason);
+  }
+
   function consumeWebSearchMode() {
     if (getWebSearchMode() !== SEARCH_MODE_ONCE) return;
-    setWebSearchMode(SEARCH_MODE_OFF);
+    clearWebSearchMode('consumed after send');
   }
 
   function toggleOneOffWebSearch() {
@@ -383,12 +398,24 @@
     toggleOneOffWebSearch();
   }
 
+  function handleHashChange() {
+    const currentChatId = getCurrentChatId();
+
+    if (currentChatId !== lastSeenChatId) {
+      clearWebSearchMode('chat changed');
+      lastSeenChatId = currentChatId;
+    }
+  }
+
   const observer = new MutationObserver(mountToggle);
 
   function start() {
+    lastSeenChatId = getCurrentChatId();
+    clearWebSearchMode('page loaded');
     setStoredWebSearchMode(getWebSearchMode());
     mountToggle();
     document.addEventListener('keydown', handleKeydown);
+    window.addEventListener('hashchange', handleHashChange);
 
     if (document.body) {
       observer.observe(document.body, { subtree: true, childList: true });
