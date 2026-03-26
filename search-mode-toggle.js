@@ -1,16 +1,20 @@
 // == TypingMind Extension: OpenRouter web search toggle ===================
 // Install in TypingMind using a pinned jsDelivr commit URL, for example:
 // https://cdn.jsdelivr.net/gh/peheje/Typingmind-Extension-searchmode@COMMIT_SHA/search-mode-toggle.js
-// v0.12 - 2026-03-26
+// v0.14 - 2026-03-26
 (() => {
   const STORAGE_KEY = 'TM_openRouterWebSearchOn';
   const MODEL_SUFFIX = ':online';
   const CONTAINER_ID = 'tm-online-toggle-container';
   const BUTTON_ID = 'tm-online-toggle-button';
   const TITLE_REQUEST_MARKER = '[[tm-title-no-online]]';
-  const SEARCH_MODE_OFF = 'off';
-  const SEARCH_MODE_ONCE = 'once';
-  const SEARCH_MODE_PINNED = 'pinned';
+  const TOUCH_LONG_PRESS_MS = 450;
+
+  const SEARCH_MODE = Object.freeze({
+    OFF: 'off',
+    ONCE: 'once',
+    PINNED: 'pinned'
+  });
 
   const CHAT_COMPLETIONS_URL_PATTERN = /\/chat\/completions(?:[/?#]|$)/;
   const CHAT_INPUT_ACTIONS_SELECTOR = '[data-element-id="chat-input-actions"]';
@@ -52,9 +56,67 @@
     </svg>
   `;
 
+  const MODE_RENDER_CONFIG = Object.freeze({
+    [SEARCH_MODE.OFF]: Object.freeze({
+      pressed: false,
+      ariaLabel: 'Web search off',
+      tooltip: 'Web search is off. Click or tap for the next message only. Shift+Click or touch and hold to pin it on. Alt+S toggles once, Shift+Alt+S toggles pinned.',
+      title: 'Web search off',
+      buttonStyle: Object.freeze({
+        backgroundColor: 'transparent',
+        color: '',
+        boxShadow: ''
+      }),
+      badge: null
+    }),
+    [SEARCH_MODE.ONCE]: Object.freeze({
+      pressed: true,
+      ariaLabel: 'Web search on for next message',
+      tooltip: 'Web search is on for the next message. Click or tap to cancel. Shift+Click or touch and hold to pin. Alt+S toggles once, Shift+Alt+S toggles pinned.',
+      title: 'Web search on for next message',
+      buttonStyle: Object.freeze({
+        backgroundColor: '#2563eb',
+        color: '#ffffff',
+        boxShadow: ''
+      }),
+      badge: Object.freeze({
+        text: '1x',
+        backgroundColor: '#ffffff',
+        color: '#2563eb'
+      })
+    }),
+    [SEARCH_MODE.PINNED]: Object.freeze({
+      pressed: true,
+      ariaLabel: 'Web search pinned',
+      tooltip: 'Web search is pinned for every message. Click or tap to switch to one-off. Shift+Click or touch and hold to turn it off. Alt+S toggles once, Shift+Alt+S toggles pinned.',
+      title: 'Web search pinned',
+      buttonStyle: Object.freeze({
+        backgroundColor: '#0f766e',
+        color: '#ffffff',
+        boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.28)'
+      }),
+      badge: Object.freeze({
+        html: PIN_BADGE_CONTENT,
+        backgroundColor: '#ffffff',
+        color: '#0f766e'
+      })
+    })
+  });
+
+  const MODE_TOGGLE_TRANSITIONS = Object.freeze({
+    once: Object.freeze({
+      [SEARCH_MODE.OFF]: SEARCH_MODE.ONCE,
+      [SEARCH_MODE.ONCE]: SEARCH_MODE.OFF,
+      [SEARCH_MODE.PINNED]: SEARCH_MODE.ONCE
+    }),
+    pinned: Object.freeze({
+      [SEARCH_MODE.OFF]: SEARCH_MODE.PINNED,
+      [SEARCH_MODE.ONCE]: SEARCH_MODE.PINNED,
+      [SEARCH_MODE.PINNED]: SEARCH_MODE.OFF
+    })
+  });
+
   const log = (...messages) => console.log('[TM Web Search]', ...messages);
-  let lastSeenChatId = '';
-  let lastSeenLocationKey = '';
 
   function getCurrentLocationKey() {
     return `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -68,16 +130,10 @@
     return params.get('chat') || '';
   }
 
-  function getWebSearchMode() {
-    const storedValue = localStorage.getItem(STORAGE_KEY);
-
-    if (storedValue === SEARCH_MODE_PINNED) return SEARCH_MODE_PINNED;
-    if (storedValue === SEARCH_MODE_ONCE || storedValue === 'true') return SEARCH_MODE_ONCE;
-    return SEARCH_MODE_OFF;
-  }
-
-  function setStoredWebSearchMode(mode) {
-    localStorage.setItem(STORAGE_KEY, mode);
+  function normalizeStoredMode(value) {
+    if (value === SEARCH_MODE.PINNED) return SEARCH_MODE.PINNED;
+    if (value === SEARCH_MODE.ONCE || value === 'true') return SEARCH_MODE.ONCE;
+    return SEARCH_MODE.OFF;
   }
 
   function updateModelSlug(model, enabled) {
@@ -111,19 +167,9 @@
     return content.map(getTextFromContentPart).filter(Boolean).join('\n');
   }
 
-  function stripTitleRequestMarker(text) {
-    if (typeof text !== 'string' || !text.includes(TITLE_REQUEST_MARKER)) {
-      return text;
-    }
-
-    return text
-      .replace(TITLE_REQUEST_MARKER, '')
-      .replace(/^\s+/, '');
-  }
-
-  function stripTitleRequestMarkerFromContent(content) {
+  function mapContentText(content, transformText) {
     if (typeof content === 'string') {
-      return stripTitleRequestMarker(content);
+      return transformText(content);
     }
 
     if (!Array.isArray(content)) {
@@ -132,7 +178,7 @@
 
     return content.map((part) => {
       if (typeof part === 'string') {
-        return stripTitleRequestMarker(part);
+        return transformText(part);
       }
 
       if (!part || typeof part !== 'object') {
@@ -140,18 +186,18 @@
       }
 
       if (typeof part.text === 'string') {
-        return { ...part, text: stripTitleRequestMarker(part.text) };
+        return { ...part, text: transformText(part.text) };
       }
 
       if (typeof part.content === 'string') {
-        return { ...part, content: stripTitleRequestMarker(part.content) };
+        return { ...part, content: transformText(part.content) };
       }
 
       return part;
     });
   }
 
-  function stripTitleRequestMarkerFromMessages(messages) {
+  function mapMessagesContent(messages, transformText) {
     if (!Array.isArray(messages)) return messages;
 
     return messages.map((message) => {
@@ -161,9 +207,19 @@
 
       return {
         ...message,
-        content: stripTitleRequestMarkerFromContent(message.content)
+        content: mapContentText(message.content, transformText)
       };
     });
+  }
+
+  function stripTitleRequestMarker(text) {
+    if (typeof text !== 'string' || !text.includes(TITLE_REQUEST_MARKER)) {
+      return text;
+    }
+
+    return text
+      .replace(TITLE_REQUEST_MARKER, '')
+      .replace(/^\s+/, '');
   }
 
   function isLikelyTitleGenerationRequest(body) {
@@ -184,285 +240,379 @@
     return combinedText.includes(TITLE_REQUEST_MARKER);
   }
 
-  function patchRequestBody(bodyText) {
+  function patchRequestBody(bodyText, mode) {
     const body = JSON.parse(bodyText);
     if (!body || typeof body !== 'object' || typeof body.model !== 'string') {
-      return { bodyText, shouldConsumeWebSearch: false };
+      return { bodyText, shouldConsumeWebSearch: false, skippedForTitle: false };
     }
 
-    const webSearchMode = getWebSearchMode();
-    const webSearchEnabled = webSearchMode !== SEARCH_MODE_OFF;
+    const webSearchEnabled = mode !== SEARCH_MODE.OFF;
     const isTitleGenerationRequest = isLikelyTitleGenerationRequest(body);
     const shouldEnableOnline = webSearchEnabled && !isTitleGenerationRequest;
 
-    if (webSearchEnabled && !shouldEnableOnline) {
-      log('skipping web search for title-generation request');
-    }
-
     if (isTitleGenerationRequest) {
-      body.messages = stripTitleRequestMarkerFromMessages(body.messages);
+      body.messages = mapMessagesContent(body.messages, stripTitleRequestMarker);
     }
 
     body.model = updateModelSlug(body.model, shouldEnableOnline);
+
     return {
       bodyText: JSON.stringify(body),
-      shouldConsumeWebSearch: shouldEnableOnline && webSearchMode === SEARCH_MODE_ONCE
+      shouldConsumeWebSearch: shouldEnableOnline && mode === SEARCH_MODE.ONCE,
+      skippedForTitle: webSearchEnabled && !shouldEnableOnline
     };
   }
 
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = async function patchedFetch(input, init) {
-    const nextInit = init ? { ...init } : init;
+  function createModeStore({ storageKey, localStorage, log }) {
+    const listeners = new Set();
 
-    try {
-      if (shouldPatchRequest(input, nextInit)) {
-        const patchedRequest = patchRequestBody(nextInit.body);
-        nextInit.body = patchedRequest.bodyText;
+    function get() {
+      return normalizeStoredMode(localStorage.getItem(storageKey));
+    }
 
-        if (patchedRequest.shouldConsumeWebSearch) {
-          consumeWebSearchMode();
-        }
+    function emit() {
+      const mode = get();
+      for (const listener of listeners) {
+        listener(mode);
       }
-    } catch (error) {
-      log('fetch patch error', error);
     }
 
-    return nativeFetch(input, nextInit);
-  };
-
-  function getToggleButton() {
-    return document.getElementById(BUTTON_ID);
-  }
-
-  function renderToggleButton(button = getToggleButton()) {
-    if (!button) return;
-
-    const mode = getWebSearchMode();
-    const enabled = mode !== SEARCH_MODE_OFF;
-    const badge = button.querySelector('[data-tm-online-badge="true"]');
-
-    button.setAttribute('aria-pressed', String(enabled));
-    button.setAttribute('data-search-mode', mode);
-
-    if (mode === SEARCH_MODE_ONCE) {
-      button.setAttribute('aria-label', 'Web search on for next message');
-      button.setAttribute('data-tooltip-content', 'Web search is on for the next message. Click to cancel. Shift+Click to pin. Alt+S toggles once, Shift+Alt+S toggles pinned.');
-      button.setAttribute('title', 'Web search on for next message');
-      button.style.backgroundColor = '#2563eb';
-      button.style.color = '#ffffff';
-      button.style.boxShadow = '';
-
-      if (badge instanceof HTMLSpanElement) {
-        badge.textContent = '1x';
-        badge.style.display = 'inline-flex';
-        badge.style.backgroundColor = '#ffffff';
-        badge.style.color = '#2563eb';
-      }
-
-      return;
+    function set(mode) {
+      localStorage.setItem(storageKey, mode);
+      emit();
+      log('web search mode', mode);
     }
 
-    if (mode === SEARCH_MODE_PINNED) {
-      button.setAttribute('aria-label', 'Web search pinned');
-      button.setAttribute('data-tooltip-content', 'Web search is pinned for every message. Click to switch to one-off. Shift+Click to turn it off. Alt+S toggles once, Shift+Alt+S toggles pinned.');
-      button.setAttribute('title', 'Web search pinned');
-      button.style.backgroundColor = '#0f766e';
-      button.style.color = '#ffffff';
-      button.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.28)';
-
-      if (badge instanceof HTMLSpanElement) {
-        badge.innerHTML = PIN_BADGE_CONTENT;
-        badge.style.display = 'inline-flex';
-        badge.style.backgroundColor = '#ffffff';
-        badge.style.color = '#0f766e';
-      }
-
-      return;
+    function clear(reason) {
+      if (get() === SEARCH_MODE.OFF) return;
+      set(SEARCH_MODE.OFF);
+      log('cleared web search mode', reason);
     }
 
-    button.setAttribute('aria-label', 'Web search off');
-    button.setAttribute('data-tooltip-content', 'Web search is off. Click for the next message only. Shift+Click to pin it on. Alt+S toggles once, Shift+Alt+S toggles pinned.');
-    button.setAttribute('title', 'Web search off');
-    button.style.backgroundColor = 'transparent';
-    button.style.color = '';
-    button.style.boxShadow = '';
-
-    if (badge instanceof HTMLSpanElement) {
-      badge.textContent = '';
-      badge.style.display = 'none';
+    function consumeOnce() {
+      if (get() !== SEARCH_MODE.ONCE) return;
+      clear('consumed after send');
     }
+
+    function toggle(kind) {
+      const currentMode = get();
+      const nextMode = MODE_TOGGLE_TRANSITIONS[kind][currentMode] || SEARCH_MODE.OFF;
+      set(nextMode);
+    }
+
+    function subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }
+
+    return {
+      get,
+      set,
+      clear,
+      consumeOnce,
+      toggleOnce() {
+        toggle('once');
+      },
+      togglePinned() {
+        toggle('pinned');
+      },
+      syncStoredValue() {
+        localStorage.setItem(storageKey, get());
+      },
+      subscribe,
+      emit
+    };
   }
 
-  function setWebSearchMode(mode) {
-    setStoredWebSearchMode(mode);
-    renderToggleButton();
-    log('web search mode', mode);
-  }
+  function createToggleUI({ document, modeStore }) {
+    function isTouchLikePointer(event) {
+      return Boolean(event && (event.pointerType === 'touch' || event.pointerType === 'pen'));
+    }
 
-  function clearWebSearchMode(reason) {
-    if (getWebSearchMode() === SEARCH_MODE_OFF) return;
-    setWebSearchMode(SEARCH_MODE_OFF);
-    log('cleared web search mode', reason);
-  }
+    function getButton() {
+      return document.getElementById(BUTTON_ID);
+    }
 
-  function consumeWebSearchMode() {
-    if (getWebSearchMode() !== SEARCH_MODE_ONCE) return;
-    clearWebSearchMode('consumed after send');
-  }
+    function renderBadge(badgeElement, badgeConfig) {
+      if (!(badgeElement instanceof HTMLSpanElement)) return;
 
-  function toggleOneOffWebSearch() {
-    const currentMode = getWebSearchMode();
-    setWebSearchMode(currentMode === SEARCH_MODE_ONCE ? SEARCH_MODE_OFF : SEARCH_MODE_ONCE);
-  }
-
-  function togglePinnedWebSearch() {
-    const currentMode = getWebSearchMode();
-    setWebSearchMode(currentMode === SEARCH_MODE_PINNED ? SEARCH_MODE_OFF : SEARCH_MODE_PINNED);
-  }
-
-  function createToggleButton() {
-    const button = document.createElement('button');
-    button.id = BUTTON_ID;
-    button.type = 'button';
-    button.className = BUTTON_CLASS_NAME;
-    button.innerHTML = BUTTON_CONTENT;
-    button.setAttribute('data-tooltip-id', 'global');
-    button.style.transition = 'background-color 120ms ease, color 120ms ease, box-shadow 120ms ease';
-    button.addEventListener('click', (event) => {
-      if (event.shiftKey) {
-        togglePinnedWebSearch();
+      if (!badgeConfig) {
+        badgeElement.textContent = '';
+        badgeElement.style.display = 'none';
+        badgeElement.style.backgroundColor = '';
+        badgeElement.style.color = '';
         return;
       }
 
-      toggleOneOffWebSearch();
-    });
-    renderToggleButton(button);
-    return button;
-  }
+      badgeElement.style.display = 'inline-flex';
+      badgeElement.style.backgroundColor = badgeConfig.backgroundColor;
+      badgeElement.style.color = badgeConfig.color;
 
-  function getOrCreateToggleContainer() {
-    let container = document.getElementById(CONTAINER_ID);
-    if (container) return container;
-
-    container = document.createElement('div');
-    container.id = CONTAINER_ID;
-    container.style.cssText = 'display: inline-flex; align-items: center; flex: 0 0 auto;';
-    container.appendChild(createToggleButton());
-    return container;
-  }
-
-  function isHiddenClone(element) {
-    return Boolean(element.closest('[inert]') || element.closest('[aria-hidden="true"]'));
-  }
-
-  function isVisibleChatInputAction(element) {
-    return Boolean(element && !isHiddenClone(element) && element.closest(CHAT_INPUT_ACTIONS_SELECTOR));
-  }
-
-  function getAnchorTarget(selector, requireChatInputActions) {
-    const elements = document.querySelectorAll(selector);
-
-    for (const element of elements) {
-      if (isHiddenClone(element)) continue;
-      if (requireChatInputActions && !isVisibleChatInputAction(element)) continue;
-
-      const anchor = element.closest('div') || element;
-      if (anchor.parentElement) {
-        return { host: anchor.parentElement, anchor };
+      if (typeof badgeConfig.html === 'string') {
+        badgeElement.innerHTML = badgeConfig.html;
+        return;
       }
+
+      badgeElement.textContent = badgeConfig.text || '';
     }
 
-    return null;
-  }
+    function render(button = getButton(), mode = modeStore.get()) {
+      if (!button) return;
 
-  function findMountTarget() {
-    return getAnchorTarget(THINKING_BUTTON_SELECTOR, true) || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
-  }
+      const config = MODE_RENDER_CONFIG[mode] || MODE_RENDER_CONFIG[SEARCH_MODE.OFF];
+      const badge = button.querySelector('[data-tm-online-badge="true"]');
 
-  function mountToggle() {
-    const target = findMountTarget();
-    if (!target) return;
+      button.setAttribute('aria-pressed', String(config.pressed));
+      button.setAttribute('data-search-mode', mode);
+      button.setAttribute('aria-label', config.ariaLabel);
+      button.setAttribute('data-tooltip-content', config.tooltip);
+      button.setAttribute('title', config.title);
 
-    const container = getOrCreateToggleContainer();
-    const isAlreadyMounted = container.parentElement === target.host && container.previousSibling === target.anchor;
-
-    if (!isAlreadyMounted) {
-      target.host.insertBefore(container, target.anchor.nextSibling);
-    }
-  }
-
-  function handleKeydown(event) {
-    if (!event.altKey || event.key.toLowerCase() !== 's') return;
-    event.preventDefault();
-
-    if (event.shiftKey) {
-      togglePinnedWebSearch();
-      return;
+      Object.assign(button.style, config.buttonStyle);
+      renderBadge(badge, config.badge);
     }
 
-    toggleOneOffWebSearch();
-  }
+    function createButton() {
+      const button = document.createElement('button');
+      let longPressTimerId = null;
+      let suppressNextClick = false;
 
-  function handleHashChange() {
-    handleLocationChange('hashchange');
-  }
+      function clearLongPressTimer() {
+        if (longPressTimerId === null) return;
+        window.clearTimeout(longPressTimerId);
+        longPressTimerId = null;
+      }
 
-  function handleLocationChange(source) {
-    const currentLocationKey = getCurrentLocationKey();
-    const currentChatId = getCurrentChatId();
+      button.id = BUTTON_ID;
+      button.type = 'button';
+      button.className = BUTTON_CLASS_NAME;
+      button.innerHTML = BUTTON_CONTENT;
+      button.setAttribute('data-tooltip-id', 'global');
+      button.style.transition = 'background-color 120ms ease, color 120ms ease, box-shadow 120ms ease';
 
-    if (currentLocationKey !== lastSeenLocationKey || currentChatId !== lastSeenChatId) {
-      clearWebSearchMode(source || 'location changed');
-      lastSeenLocationKey = currentLocationKey;
-      lastSeenChatId = currentChatId;
+      button.addEventListener('pointerdown', (event) => {
+        if (!isTouchLikePointer(event)) return;
+
+        clearLongPressTimer();
+        longPressTimerId = window.setTimeout(() => {
+          longPressTimerId = null;
+          suppressNextClick = true;
+          modeStore.togglePinned();
+        }, TOUCH_LONG_PRESS_MS);
+      });
+
+      button.addEventListener('pointerup', clearLongPressTimer);
+      button.addEventListener('pointercancel', clearLongPressTimer);
+      button.addEventListener('pointerleave', clearLongPressTimer);
+
+      button.addEventListener('click', (event) => {
+        if (suppressNextClick) {
+          suppressNextClick = false;
+          event.preventDefault();
+          return;
+        }
+
+        if (event.shiftKey) {
+          modeStore.togglePinned();
+          return;
+        }
+
+        modeStore.toggleOnce();
+      });
+      render(button);
+      return button;
     }
-  }
 
-  function handleStorageChange(event) {
-    if (event && event.key && event.key !== STORAGE_KEY) return;
-    renderToggleButton();
-  }
+    function getOrCreateContainer() {
+      let container = document.getElementById(CONTAINER_ID);
+      if (container) return container;
 
-  function wrapHistoryMethod(methodName) {
-    const nativeMethod = window.history[methodName];
-    if (typeof nativeMethod !== 'function') return;
+      container = document.createElement('div');
+      container.id = CONTAINER_ID;
+      container.style.cssText = 'display: inline-flex; align-items: center; flex: 0 0 auto;';
+      container.appendChild(createButton());
+      return container;
+    }
 
-    window.history[methodName] = function wrappedHistoryMethod(...args) {
-      const result = nativeMethod.apply(this, args);
-      handleLocationChange(`history ${methodName}`);
-      return result;
+    return {
+      render,
+      getOrCreateContainer
     };
   }
 
-  const observer = new MutationObserver(() => {
-    handleLocationChange('dom changed');
-    mountToggle();
-  });
-
-  function start() {
-    lastSeenChatId = getCurrentChatId();
-    lastSeenLocationKey = getCurrentLocationKey();
-    clearWebSearchMode('page loaded');
-    setStoredWebSearchMode(getWebSearchMode());
-    mountToggle();
-    document.addEventListener('keydown', handleKeydown);
-    window.addEventListener('hashchange', handleHashChange);
-    window.addEventListener('popstate', () => handleLocationChange('popstate'));
-    window.addEventListener('storage', handleStorageChange);
-    wrapHistoryMethod('pushState');
-    wrapHistoryMethod('replaceState');
-
-    if (document.body) {
-      observer.observe(document.body, { subtree: true, childList: true });
+  function createMountManager({ document, ui }) {
+    function isHiddenClone(element) {
+      return Boolean(element.closest('[inert]') || element.closest('[aria-hidden="true"]'));
     }
 
-    log('extension loaded');
+    function isVisibleChatInputAction(element) {
+      return Boolean(element && !isHiddenClone(element) && element.closest(CHAT_INPUT_ACTIONS_SELECTOR));
+    }
+
+    function getAnchorTarget(selector, requireChatInputActions) {
+      const elements = document.querySelectorAll(selector);
+
+      for (const element of elements) {
+        if (isHiddenClone(element)) continue;
+        if (requireChatInputActions && !isVisibleChatInputAction(element)) continue;
+
+        const anchor = element.closest('div') || element;
+        if (anchor.parentElement) {
+          return { host: anchor.parentElement, anchor };
+        }
+      }
+
+      return null;
+    }
+
+    function findTarget() {
+      return getAnchorTarget(THINKING_BUTTON_SELECTOR, true) || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
+    }
+
+    function mount() {
+      const target = findTarget();
+      if (!target) return;
+
+      const container = ui.getOrCreateContainer();
+      const isAlreadyMounted = container.parentElement === target.host && container.previousSibling === target.anchor;
+
+      if (!isAlreadyMounted) {
+        target.host.insertBefore(container, target.anchor.nextSibling);
+      }
+    }
+
+    return { mount };
   }
 
+  function createLocationWatcher({ onLocationChange }) {
+    let lastSeenChatId = '';
+    let lastSeenLocationKey = '';
+
+    function sync() {
+      lastSeenChatId = getCurrentChatId();
+      lastSeenLocationKey = getCurrentLocationKey();
+    }
+
+    function handleChange(source) {
+      const currentLocationKey = getCurrentLocationKey();
+      const currentChatId = getCurrentChatId();
+
+      if (currentLocationKey !== lastSeenLocationKey || currentChatId !== lastSeenChatId) {
+        onLocationChange(source || 'location changed');
+        lastSeenLocationKey = currentLocationKey;
+        lastSeenChatId = currentChatId;
+      }
+    }
+
+    return {
+      sync,
+      handleChange
+    };
+  }
+
+  function installFetchPatch({ window, modeStore, log }) {
+    const nativeFetch = window.fetch.bind(window);
+
+    window.fetch = async function patchedFetch(input, init) {
+      const nextInit = init ? { ...init } : init;
+
+      try {
+        if (shouldPatchRequest(input, nextInit)) {
+          const patchedRequest = patchRequestBody(nextInit.body, modeStore.get());
+          nextInit.body = patchedRequest.bodyText;
+
+          if (patchedRequest.skippedForTitle) {
+            log('skipping web search for title-generation request');
+          }
+
+          if (patchedRequest.shouldConsumeWebSearch) {
+            modeStore.consumeOnce();
+          }
+        }
+      } catch (error) {
+        log('fetch patch error', error);
+      }
+
+      return nativeFetch(input, nextInit);
+    };
+  }
+
+  function createApp({ window, document, localStorage }) {
+    const modeStore = createModeStore({ storageKey: STORAGE_KEY, localStorage, log });
+    const ui = createToggleUI({ document, modeStore });
+    const mountManager = createMountManager({ document, ui });
+    const locationWatcher = createLocationWatcher({
+      onLocationChange(source) {
+        modeStore.clear(source);
+      }
+    });
+
+    function handleKeydown(event) {
+      if (!event.altKey || event.key.toLowerCase() !== 's') return;
+      event.preventDefault();
+
+      if (event.shiftKey) {
+        modeStore.togglePinned();
+        return;
+      }
+
+      modeStore.toggleOnce();
+    }
+
+    function handleStorageChange(event) {
+      if (event && event.key && event.key !== STORAGE_KEY) return;
+      modeStore.emit();
+    }
+
+    function wrapHistoryMethod(methodName) {
+      const nativeMethod = window.history[methodName];
+      if (typeof nativeMethod !== 'function') return;
+
+      window.history[methodName] = function wrappedHistoryMethod(...args) {
+        const result = nativeMethod.apply(this, args);
+        locationWatcher.handleChange(`history ${methodName}`);
+        return result;
+      };
+    }
+
+    function start() {
+      modeStore.subscribe((mode) => ui.render(undefined, mode));
+      installFetchPatch({ window, modeStore, log });
+
+      locationWatcher.sync();
+      modeStore.clear('page loaded');
+      modeStore.syncStoredValue();
+      mountManager.mount();
+
+      document.addEventListener('keydown', handleKeydown);
+      window.addEventListener('hashchange', () => locationWatcher.handleChange('hashchange'));
+      window.addEventListener('popstate', () => locationWatcher.handleChange('popstate'));
+      window.addEventListener('storage', handleStorageChange);
+
+      wrapHistoryMethod('pushState');
+      wrapHistoryMethod('replaceState');
+
+      if (document.body) {
+        const observer = new MutationObserver(() => {
+          locationWatcher.handleChange('dom changed');
+          mountManager.mount();
+        });
+
+        observer.observe(document.body, { subtree: true, childList: true });
+      }
+
+      log('extension loaded');
+    }
+
+    return { start };
+  }
+
+  const app = createApp({ window, document, localStorage });
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start, { once: true });
+    document.addEventListener('DOMContentLoaded', () => app.start(), { once: true });
     return;
   }
 
-  start();
+  app.start();
 })();
