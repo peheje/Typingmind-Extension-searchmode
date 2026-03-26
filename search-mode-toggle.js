@@ -54,6 +54,11 @@
 
   const log = (...messages) => console.log('[TM Web Search]', ...messages);
   let lastSeenChatId = '';
+  let lastSeenLocationKey = '';
+
+  function getCurrentLocationKey() {
+    return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  }
 
   function getCurrentChatId() {
     const hash = window.location.hash || '';
@@ -399,23 +404,53 @@
   }
 
   function handleHashChange() {
+    handleLocationChange('hashchange');
+  }
+
+  function handleLocationChange(source) {
+    const currentLocationKey = getCurrentLocationKey();
     const currentChatId = getCurrentChatId();
 
-    if (currentChatId !== lastSeenChatId) {
-      clearWebSearchMode('chat changed');
+    if (currentLocationKey !== lastSeenLocationKey || currentChatId !== lastSeenChatId) {
+      clearWebSearchMode(source || 'location changed');
+      lastSeenLocationKey = currentLocationKey;
       lastSeenChatId = currentChatId;
     }
   }
 
-  const observer = new MutationObserver(mountToggle);
+  function handleStorageChange(event) {
+    if (event && event.key && event.key !== STORAGE_KEY) return;
+    renderToggleButton();
+  }
+
+  function wrapHistoryMethod(methodName) {
+    const nativeMethod = window.history[methodName];
+    if (typeof nativeMethod !== 'function') return;
+
+    window.history[methodName] = function wrappedHistoryMethod(...args) {
+      const result = nativeMethod.apply(this, args);
+      handleLocationChange(`history ${methodName}`);
+      return result;
+    };
+  }
+
+  const observer = new MutationObserver(() => {
+    handleLocationChange('dom changed');
+    mountToggle();
+  });
 
   function start() {
     lastSeenChatId = getCurrentChatId();
+    lastSeenLocationKey = getCurrentLocationKey();
     clearWebSearchMode('page loaded');
     setStoredWebSearchMode(getWebSearchMode());
     mountToggle();
     document.addEventListener('keydown', handleKeydown);
     window.addEventListener('hashchange', handleHashChange);
+    window.addEventListener('popstate', () => handleLocationChange('popstate'));
+    window.addEventListener('storage', handleStorageChange);
+    wrapHistoryMethod('pushState');
+    wrapHistoryMethod('replaceState');
 
     if (document.body) {
       observer.observe(document.body, { subtree: true, childList: true });
