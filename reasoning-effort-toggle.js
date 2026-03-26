@@ -12,6 +12,7 @@
   const CACHE_TOGGLE_CONTAINER_SELECTOR = '#tm-cache-toggle-container';
   const SEARCH_TOGGLE_CONTAINER_SELECTOR = '#tm-online-toggle-container';
   const THINKING_BUTTON_SELECTOR = '[data-element-id="toggle-thinking-button"]';
+  const KB_BUTTON_SELECTOR = '[data-element-id="toggle-kb-button"]';
   const SIDEBAR_BUTTON_SELECTOR = '[data-element-id="new-chat-button-in-side-bar"]';
 
   const EFFORT = Object.freeze({
@@ -305,6 +306,7 @@
       return getSiblingAnchor(CACHE_TOGGLE_CONTAINER_SELECTOR)
         || getSiblingAnchor(SEARCH_TOGGLE_CONTAINER_SELECTOR)
         || getAnchorTarget(THINKING_BUTTON_SELECTOR, true)
+        || getAnchorTarget(KB_BUTTON_SELECTOR, true)
         || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
     }
 

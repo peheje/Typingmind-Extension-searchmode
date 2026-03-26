@@ -19,6 +19,7 @@
   const CHAT_COMPLETIONS_URL_PATTERN = /\/chat\/completions(?:[/?#]|$)/;
   const CHAT_INPUT_ACTIONS_SELECTOR = '[data-element-id="chat-input-actions"]';
   const THINKING_BUTTON_SELECTOR = '[data-element-id="toggle-thinking-button"]';
+  const KB_BUTTON_SELECTOR = '[data-element-id="toggle-kb-button"]';
   const SIDEBAR_BUTTON_SELECTOR = '[data-element-id="new-chat-button-in-side-bar"]';
 
   const BUTTON_CLASS_NAME = [
@@ -481,7 +482,7 @@
     }
 
     function findTarget() {
-      return getAnchorTarget(THINKING_BUTTON_SELECTOR, true) || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
+      return getAnchorTarget(THINKING_BUTTON_SELECTOR, true) || getAnchorTarget(KB_BUTTON_SELECTOR, true) || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
     }
 
     function mount() {
