@@ -275,8 +275,21 @@
       return { host: el.parentElement, anchor: el };
     }
 
+    function getDirectButtonAnchor(selector) {
+      const elements = document.querySelectorAll(selector);
+
+      for (const element of elements) {
+        if (!isVisibleChatInputAction(element)) continue;
+        if (element.parentElement) {
+          return { host: element.parentElement, anchor: element };
+        }
+      }
+
+      return null;
+    }
+
     function findTarget() {
-      return getSearchToggleAnchor() || getAnchorTarget(THINKING_BUTTON_SELECTOR, true) || getAnchorTarget(KB_BUTTON_SELECTOR, true) || getAnchorTarget(VOICE_INPUT_BUTTON_SELECTOR, true) || getAnchorTarget(UPLOAD_DOCUMENT_BUTTON_SELECTOR, true) || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
+      return getSearchToggleAnchor() || getAnchorTarget(THINKING_BUTTON_SELECTOR, true) || getAnchorTarget(KB_BUTTON_SELECTOR, true) || getDirectButtonAnchor(VOICE_INPUT_BUTTON_SELECTOR) || getDirectButtonAnchor(UPLOAD_DOCUMENT_BUTTON_SELECTOR) || getAnchorTarget(SIDEBAR_BUTTON_SELECTOR, false);
     }
 
     function mount() {
