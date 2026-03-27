@@ -32,11 +32,12 @@
     span.style.maxWidth = '300px';
     span.style.minWidth = '0';
 
-    // Also ensure the parent button can shrink within flex.
-    const button = span.closest('button');
-    if (button) {
-      button.style.minWidth = '0';
-      button.style.overflow = 'hidden';
+    // Ensure all ancestor flex items can shrink so the layout doesn't overflow.
+    let el = span.parentElement;
+    while (el && !el.classList.contains('pb-1')) {
+      el.style.minWidth = '0';
+      el.style.overflow = 'hidden';
+      el = el.parentElement;
     }
 
     log('model name made visible');
