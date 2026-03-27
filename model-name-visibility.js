@@ -17,28 +17,30 @@
     return span || null;
   }
 
+  function makeShrinkable(el) {
+    if (el) {
+      el.style.minWidth = '0';
+      el.style.overflow = 'hidden';
+    }
+  }
+
   function applyVisibility(span) {
     if (!span || span.getAttribute(BOUND_ATTRIBUTE) === 'true') return;
 
     span.setAttribute(BOUND_ATTRIBUTE, 'true');
 
-    // Override container-query hiding: force visible on all sizes.
+    // Force visible on all screen sizes (TM hides it on mobile).
     span.classList.remove('hidden');
     span.style.display = 'block';
-
-    // Let the flex layout truncate naturally instead of forcing a width.
-    // The TM 'truncate' class already handles overflow/ellipsis.
-    // We just widen the container-query max-widths and ensure it can shrink.
     span.style.maxWidth = '300px';
-    span.style.minWidth = '0';
 
-    // Ensure all ancestor flex items can shrink so the layout doesn't overflow.
-    let el = span.parentElement;
-    while (el && !el.classList.contains('pb-1')) {
-      el.style.minWidth = '0';
-      el.style.overflow = 'hidden';
-      el = el.parentElement;
-    }
+    // Allow the button and its wrapper divs to shrink within flex layout
+    // so action buttons (new chat, regenerate) don't cause horizontal overflow.
+    // Structure: span → button → div.sm:relative → div.flex (the flex child).
+    const button = span.closest('button');
+    makeShrinkable(button);
+    makeShrinkable(button?.parentElement);
+    makeShrinkable(button?.parentElement?.parentElement);
 
     log('model name made visible');
   }
