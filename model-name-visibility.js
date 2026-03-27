@@ -26,11 +26,18 @@
     span.classList.remove('hidden');
     span.style.display = 'block';
 
-    // Widen the truncation limit but cap to available space.
-    span.style.maxWidth = 'min(300px, 50vw)';
-    span.style.overflow = 'hidden';
-    span.style.textOverflow = 'ellipsis';
-    span.style.whiteSpace = 'nowrap';
+    // Let the flex layout truncate naturally instead of forcing a width.
+    // The TM 'truncate' class already handles overflow/ellipsis.
+    // We just widen the container-query max-widths and ensure it can shrink.
+    span.style.maxWidth = '300px';
+    span.style.minWidth = '0';
+
+    // Also ensure the parent button can shrink within flex.
+    const button = span.closest('button');
+    if (button) {
+      button.style.minWidth = '0';
+      button.style.overflow = 'hidden';
+    }
 
     log('model name made visible');
   }
