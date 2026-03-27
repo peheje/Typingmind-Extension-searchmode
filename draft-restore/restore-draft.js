@@ -207,9 +207,10 @@
   }
 
   function handleHashChange() {
-    // Navigated away from new chat — clear the recovery draft
-    if (!isNewChat()) {
-      writeDraft('');
+    // When navigating to a new chat, try to restore the draft into the textarea.
+    // Clearing happens only on send (fetch intercept) or when the user empties the textarea.
+    if (isNewChat()) {
+      restoreDraft();
     }
   }
 
