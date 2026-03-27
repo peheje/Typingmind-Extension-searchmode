@@ -1,10 +1,9 @@
-// == TypingMind Extension: Restore chat input draft ========================
+// == TypingMind Extension: Restore new-chat draft ===========================
 // Install in TypingMind using a pinned jsDelivr commit URL, for example:
 // https://cdn.jsdelivr.net/gh/peheje/Typingmind-Extension-searchmode@COMMIT_SHA/draft-restore/restore-draft.js
-// v0.3 - 2026-03-23
+// v0.4 - 2026-03-27
 (() => {
-  const RECOVERY_STORAGE_KEY = 'TM_chatInputDraft';
-  const TYPINGMIND_DRAFTS_STORAGE_KEY = 'TM_useDraftContent';
+  const STORAGE_KEY = 'TM_chatInputDraft';
   const TEXTAREA_SELECTOR = '[data-element-id="chat-input-textbox"]';
   const BOUND_ATTRIBUTE = 'data-tm-draft-restore-bound';
   const SAVE_DELAY_MS = 300;
@@ -12,99 +11,36 @@
 
   let saveTimerId = null;
   let lastBoundTextarea = null;
-  let lastSeenChatId = '';
   let lastSentDraft = '';
 
   const log = (...messages) => console.log('[TM Draft Restore]', ...messages);
 
-  function normalizeDraftValue(value) {
-    if (typeof value !== 'string') return '';
-    return value.trim().length > 0 ? value : '';
-  }
-
-  function getCurrentChatId() {
+  function isNewChat() {
     const hash = window.location.hash || '';
-    if (!hash.startsWith('#chat=')) return '';
-
-    const params = new URLSearchParams(hash.slice(1));
-    return params.get('chat') || '';
+    return !hash.startsWith('#chat=');
   }
 
-  function readRecoveryDraft() {
+  function readDraft() {
     try {
-      return localStorage.getItem(RECOVERY_STORAGE_KEY) || '';
+      return localStorage.getItem(STORAGE_KEY) || '';
     } catch (error) {
       log('storage read error', error);
       return '';
     }
   }
 
-  function writeRecoveryDraft(value) {
+  function writeDraft(value) {
     try {
-      const normalizedValue = normalizeDraftValue(value);
+      const normalized = typeof value === 'string' && value.trim() ? value : '';
 
-      if (normalizedValue) {
-        localStorage.setItem(RECOVERY_STORAGE_KEY, normalizedValue);
+      if (normalized) {
+        localStorage.setItem(STORAGE_KEY, normalized);
       } else {
-        localStorage.removeItem(RECOVERY_STORAGE_KEY);
+        localStorage.removeItem(STORAGE_KEY);
       }
     } catch (error) {
       log('storage write error', error);
     }
-  }
-
-  function readTypingMindDraftMap() {
-    try {
-      const rawValue = localStorage.getItem(TYPINGMIND_DRAFTS_STORAGE_KEY);
-      if (!rawValue) return {};
-
-      const parsedValue = JSON.parse(rawValue);
-      return parsedValue && typeof parsedValue === 'object' ? parsedValue : {};
-    } catch (error) {
-      log('typingmind draft map read error', error);
-      return {};
-    }
-  }
-
-  function writeTypingMindDraftMap(draftMap) {
-    try {
-      const entries = Object.entries(draftMap || {}).filter((entry) => normalizeDraftValue(entry[1]));
-
-      if (entries.length > 0) {
-        localStorage.setItem(TYPINGMIND_DRAFTS_STORAGE_KEY, JSON.stringify(Object.fromEntries(entries)));
-      } else {
-        localStorage.removeItem(TYPINGMIND_DRAFTS_STORAGE_KEY);
-      }
-    } catch (error) {
-      log('typingmind draft map write error', error);
-    }
-  }
-
-  function readTypingMindDraft(chatId = getCurrentChatId()) {
-    if (!chatId) return '';
-
-    const draftMap = readTypingMindDraftMap();
-    return typeof draftMap[chatId] === 'string' ? draftMap[chatId] : '';
-  }
-
-  function writeTypingMindDraft(value, chatId = getCurrentChatId()) {
-    if (!chatId) return;
-
-    const draftMap = readTypingMindDraftMap();
-    const normalizedValue = normalizeDraftValue(value);
-
-    if (normalizedValue) {
-      draftMap[chatId] = normalizedValue;
-    } else {
-      delete draftMap[chatId];
-    }
-
-    writeTypingMindDraftMap(draftMap);
-  }
-
-  function clearDraft(chatId = getCurrentChatId()) {
-    writeRecoveryDraft('');
-    writeTypingMindDraft('', chatId);
   }
 
   function getTextarea() {
@@ -128,8 +64,9 @@
     return Boolean(textarea && textarea !== getTextarea() && !textarea.isConnected);
   }
 
-  function persistTextareaValue(textarea = getTextarea(), chatId = getCurrentChatId(), allowDetached = false) {
-    if (!textarea || (!allowDetached && isStaleTextarea(textarea))) return;
+  function persistTextareaValue(textarea = getTextarea()) {
+    if (!textarea || isStaleTextarea(textarea)) return;
+    if (!isNewChat()) return;
 
     if (saveTimerId) {
       window.clearTimeout(saveTimerId);
@@ -137,49 +74,38 @@
     }
 
     const value = textarea.value;
-    if (lastSentDraft) {
-      if (value.trim() === lastSentDraft.trim()) {
-        return;
-      }
+    if (lastSentDraft && value.trim() === lastSentDraft.trim()) return;
 
-      lastSentDraft = '';
-    }
-
-    writeRecoveryDraft(value);
-    writeTypingMindDraft(value, chatId);
+    lastSentDraft = '';
+    writeDraft(value);
   }
 
   function schedulePersist(textarea) {
+    if (!isNewChat()) return;
+
     if (saveTimerId) {
       window.clearTimeout(saveTimerId);
     }
 
-    if (normalizeDraftValue(textarea.value) === '') {
+    if (!textarea.value.trim()) {
       persistTextareaValue(textarea);
       return;
     }
 
     saveTimerId = window.setTimeout(() => {
       saveTimerId = null;
-
-      if (isStaleTextarea(textarea)) {
-        return;
-      }
-
-      persistTextareaValue(textarea);
+      if (!isStaleTextarea(textarea)) persistTextareaValue(textarea);
     }, SAVE_DELAY_MS);
   }
 
-  function restoreDraftIfTextareaIsEmpty(textarea = getTextarea()) {
+  function restoreDraft(textarea = getTextarea()) {
     if (!textarea || textarea.value.length > 0) return;
+    if (!isNewChat()) return;
 
-    const currentChatId = getCurrentChatId();
-    const draft = readTypingMindDraft(currentChatId) || readRecoveryDraft();
-    if (!normalizeDraftValue(draft)) return;
+    const draft = readDraft();
+    if (!draft) return;
 
     setTextareaValue(textarea, draft);
-    writeTypingMindDraft(draft, currentChatId);
-    writeRecoveryDraft(draft);
 
     try {
       textarea.setSelectionRange(draft.length, draft.length);
@@ -192,31 +118,26 @@
     if (!textarea) return;
 
     if (textarea.getAttribute(BOUND_ATTRIBUTE) === 'true') {
-      lastSeenChatId = getCurrentChatId();
       lastBoundTextarea = textarea;
       return;
     }
 
     textarea.setAttribute(BOUND_ATTRIBUTE, 'true');
     textarea.addEventListener('input', () => schedulePersist(textarea));
-    textarea.addEventListener('change', () => persistTextareaValue(textarea));
     textarea.addEventListener('blur', () => persistTextareaValue(textarea));
 
-    restoreDraftIfTextareaIsEmpty(textarea);
-    lastSeenChatId = getCurrentChatId();
+    restoreDraft(textarea);
     lastBoundTextarea = textarea;
     log('textarea bound');
   }
+
+  // --- Fetch intercept: clear draft on send ----------------------------------
 
   function getRequestUrl(input) {
     if (typeof input === 'string') return input;
     if (input instanceof URL) return input.toString();
     if (input && typeof input.url === 'string') return input.url;
     return '';
-  }
-
-  function shouldInspectRequest(input, init) {
-    return CHAT_COMPLETIONS_URL_PATTERN.test(getRequestUrl(input)) && init && typeof init.body === 'string';
   }
 
   function getTextFromContentPart(part) {
@@ -247,28 +168,25 @@
     return '';
   }
 
-  function maybeClearDraftFromRequest(bodyText) {
-    const savedDraft = readRecoveryDraft();
-    if (!savedDraft) return;
-
-    const normalizedSavedDraft = savedDraft.trim();
-    if (!normalizedSavedDraft) return;
+  function maybeClearDraftOnSend(bodyText) {
+    const savedDraft = readDraft();
+    if (!savedDraft || !savedDraft.trim()) return;
 
     const body = JSON.parse(bodyText);
-    const lastUserMessageText = getLastUserMessageText(body);
+    const lastUserMessage = getLastUserMessageText(body);
 
-    if (lastUserMessageText && lastUserMessageText === normalizedSavedDraft) {
+    if (lastUserMessage && lastUserMessage === savedDraft.trim()) {
       lastSentDraft = savedDraft;
-      clearDraft();
-      log('cleared saved draft after send');
+      writeDraft('');
+      log('cleared draft after send');
     }
   }
 
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async function patchedFetch(input, init) {
     try {
-      if (shouldInspectRequest(input, init)) {
-        maybeClearDraftFromRequest(init.body);
+      if (CHAT_COMPLETIONS_URL_PATTERN.test(getRequestUrl(input)) && init && typeof init.body === 'string') {
+        maybeClearDraftOnSend(init.body);
       }
     } catch (error) {
       log('fetch patch error', error);
@@ -276,6 +194,8 @@
 
     return nativeFetch(input, init);
   };
+
+  // --- Lifecycle -------------------------------------------------------------
 
   const observer = new MutationObserver(() => {
     bindTextarea(getTextarea());
@@ -287,21 +207,13 @@
   }
 
   function handleHashChange() {
-    if (lastBoundTextarea) {
-      persistTextareaValue(lastBoundTextarea, lastSeenChatId, true);
-    }
-
-    lastSeenChatId = getCurrentChatId();
-  }
-
-  function handleVisibilityChange() {
-    if (document.visibilityState === 'hidden') {
-      handlePageHide();
+    // Navigated away from new chat — clear the recovery draft
+    if (!isNewChat()) {
+      writeDraft('');
     }
   }
 
   function start() {
-    lastSeenChatId = getCurrentChatId();
     bindTextarea(getTextarea());
 
     if (document.body) {
@@ -311,7 +223,10 @@
     window.addEventListener('pagehide', handlePageHide);
     window.addEventListener('beforeunload', handlePageHide);
     window.addEventListener('hashchange', handleHashChange);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') handlePageHide();
+    });
+
     log('extension loaded');
   }
 

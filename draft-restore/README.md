@@ -1,30 +1,22 @@
-# TypingMind Extension: Restore Chat Draft
+# TypingMind Extension: Restore New-Chat Draft
 
-> **Note:** Probably not required after latest update from TypingMind — their native draft handling now covers the scenarios this extension was built for.
-
-This TypingMind extension saves the current contents of the main chat textarea and restores it after a reload.
-
-It targets the textarea with `data-element-id="chat-input-textbox"`.
+TypingMind's built-in draft system works for existing chats but not for new (unsaved) chats. This extension fills that gap by saving and restoring the textarea content when no chat ID is present in the URL.
 
 ## What it does
 
-- Saves the current draft to `localStorage` with a short debounce while you type.
-- Mirrors drafts into TypingMind's built-in `TM_useDraftContent` storage for the current `#chat=` id.
-- Restores the draft when TypingMind reloads, as long as the textbox is empty.
-- Falls back to a global recovery draft so a lost new-chat prompt can still come back.
-- Clears the saved draft when TypingMind sends that same text to `/chat/completions`.
-- Rebinds itself automatically if TypingMind re-renders the page.
+- Saves the textarea to `localStorage` (debounced) while typing in a **new chat** only.
+- Restores the saved draft when TypingMind reloads or re-renders and the textarea is empty.
+- Clears the draft when the message is sent or the user navigates to an existing chat.
+- Does **not** touch `TM_useDraftContent` — existing-chat drafts are left to TypingMind.
 
 ## Install as a TypingMind Extension
 
 1. Host `draft-restore/restore-draft.js` at a public URL.
-2. Make sure the file is served with `application/javascript` or `text/javascript` and allows TypingMind to fetch it with CORS.
-3. In TypingMind, go to `Preferences -> Advanced Settings -> Extensions`.
-4. Paste the script URL and install it.
-5. Restart TypingMind.
+2. In TypingMind, go to `Preferences -> Advanced Settings -> Extensions`.
+3. Paste the script URL and install it.
+4. Restart TypingMind.
 
 ## Notes
 
-- The extension uses `TM_chatInputDraft` as a global recovery key and also syncs with TypingMind's `TM_useDraftContent` map.
-- TypingMind loads extensions once when the app starts.
+- Storage key: `TM_chatInputDraft`.
 - If the app becomes unusable, open TypingMind with `?safe_mode=1` to disable extensions temporarily.
