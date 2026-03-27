@@ -26,8 +26,11 @@
     span.classList.remove('hidden');
     span.style.display = 'block';
 
-    // Remove tight max-width constraints so the name isn't cut off.
-    span.style.maxWidth = '300px';
+    // Widen the truncation limit but cap to available space.
+    span.style.maxWidth = 'min(300px, 50vw)';
+    span.style.overflow = 'hidden';
+    span.style.textOverflow = 'ellipsis';
+    span.style.whiteSpace = 'nowrap';
 
     log('model name made visible');
   }
