@@ -1,5 +1,7 @@
 # TypingMind Extension: Restore Chat Draft
 
+> **Note:** Probably not required after latest update from TypingMind — their native draft handling now covers the scenarios this extension was built for.
+
 This TypingMind extension saves the current contents of the main chat textarea and restores it after a reload.
 
 It targets the textarea with `data-element-id="chat-input-textbox"`.
