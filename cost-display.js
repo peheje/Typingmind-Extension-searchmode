@@ -289,11 +289,14 @@
       return;
     }
 
-    // Find anchor: the "About this chat" button in the top bar
-    const aboutBtn = document.querySelector(
-      '[data-element-id="current-chat-title"] [data-tooltip-content="About this chat"]'
+    // Find anchor: the "More actions" dropdown button in the top bar
+    const moreActionsBtn = document.querySelector(
+      '[data-element-id="current-chat-title"] [data-tooltip-content="More actions"]'
     );
-    if (!aboutBtn) return;
+    if (!moreActionsBtn) return;
+    // The button is inside a wrapper div, insert before the wrapper
+    const aboutBtn = moreActionsBtn.closest('div[data-headlessui-state]') || moreActionsBtn;
+    if (!aboutBtn.parentElement) return;
 
     btn = document.createElement('button');
     btn.id = TOP_BAR_BUTTON_ID;
