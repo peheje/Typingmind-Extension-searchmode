@@ -7,7 +7,7 @@
   const MODEL_SUFFIX = ':online';
   const CONTAINER_ID = 'tm-online-toggle-container';
   const BUTTON_ID = 'tm-online-toggle-button';
-  const TITLE_REQUEST_MARKER = '[[tm-title-no-online]]';
+  const TITLE_REQUEST_MARKER = '[[tm-title-gen]]';
   const TOUCH_LONG_PRESS_MS = 450;
 
   const SEARCH_MODE = Object.freeze({

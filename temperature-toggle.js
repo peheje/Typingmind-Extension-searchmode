@@ -7,6 +7,7 @@
   const CONTAINER_ID = 'tm-temp-toggle-container';
   const BUTTON_ID = 'tm-temp-toggle-button';
 
+  const TITLE_GEN_MARKER = '[[tm-title-gen]]';
   const CHAT_COMPLETIONS_URL_PATTERN = /\/chat\/completions(?:[/?#]|$)/;
   const CHAT_INPUT_ACTIONS_SELECTOR = '[data-element-id="chat-input-actions"]';
   const REASONING_TOGGLE_CONTAINER_SELECTOR = '#tm-reasoning-toggle-container';
@@ -160,6 +161,7 @@
 
   function patchRequestBody(bodyText, temp) {
     if (temp === TEMP.OFF) return { bodyText, patched: false };
+    if (bodyText.includes(TITLE_GEN_MARKER)) return { bodyText, patched: false };
 
     const body = JSON.parse(bodyText);
     if (!body || typeof body !== 'object') return { bodyText, patched: false };
