@@ -1,208 +1,40 @@
 // == TypingMind Extension: OpenRouter per-message cost display ================
 // Intercepts streaming responses to capture usage/cost data from OpenRouter
 // and displays it inline after each assistant message.
-// Persists cost data in TypingMind's IndexedDB chat objects (tmMetadata.extCost)
-// so it syncs across devices via TM's built-in cloud sync.
-// v0.4 - 2026-03-28
+// Persists cost data in localStorage keyed by message UUID.
+// v0.3 - 2026-03-28
 (() => {
   const PREFIX = '[cost-display]';
   const log = (...args) => console.log(PREFIX, ...args);
   const warn = (...args) => console.warn(PREFIX, ...args);
 
-  const LEGACY_STORAGE_KEY = 'TM_costDisplayData';
+  const STORAGE_KEY = 'TM_costDisplayData';
   const LABELS_VISIBLE_KEY = 'TM_costDisplayShowLabels';
   const CHAT_COMPLETIONS_URL_PATTERN = /\/chat\/completions(?:[/?#]|$)/;
   const TITLE_GEN_MARKER = '[[tm-title-gen]]';
   const TOP_BAR_BUTTON_ID = 'tm-cost-topbar-button';
 
-  const DB_NAME = 'keyval-store';
-  const STORE_NAME = 'keyval';
-
   // ---------------------------------------------------------------------------
-  // Chat ID from URL
+  // Storage
   // ---------------------------------------------------------------------------
 
-  function getCurrentChatId() {
-    const hash = window.location.hash || '';
-    if (!hash.startsWith('#chat=')) return '';
-    const params = new URLSearchParams(hash.slice(1));
-    return params.get('chat') || '';
-  }
-
-  // ---------------------------------------------------------------------------
-  // IndexedDB helpers
-  // ---------------------------------------------------------------------------
-
-  let dbHandle = null;
-  let dbPromise = null;
-
-  function openDB() {
-    if (dbHandle) return Promise.resolve(dbHandle);
-    if (dbPromise) return dbPromise;
-
-    dbPromise = new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME);
-      req.onsuccess = (e) => {
-        dbHandle = e.target.result;
-        dbHandle.onclose = () => { dbHandle = null; dbPromise = null; };
-        resolve(dbHandle);
-      };
-      req.onerror = () => reject(req.error);
-    });
-
-    return dbPromise;
-  }
-
-  async function readChatFromIDB(chatId) {
-    if (!chatId) return null;
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.get(`CHAT_${chatId}`);
-      req.onsuccess = () => {
-        const raw = req.result;
-        if (!raw) { resolve(null); return; }
-        try {
-          resolve(typeof raw === 'string' ? JSON.parse(raw) : raw);
-        } catch {
-          resolve(null);
-        }
-      };
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  async function saveChatToIDB(chatId, chatObj) {
-    if (!chatId) return;
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.put(JSON.stringify(chatObj), `CHAT_${chatId}`);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  // Serialize IDB writes to prevent read-modify-write races
-  let writeQueue = Promise.resolve();
-
-  async function saveCostEntry(chatId, uuid, costData) {
-    const job = writeQueue.then(async () => {
-      const chat = await readChatFromIDB(chatId);
-      if (!chat || !Array.isArray(chat.messages)) {
-        warn('chat not found in IDB for save, will retry later:', chatId);
-        return false;
-      }
-      const msg = chat.messages.find((m) => m.uuid === uuid);
-      if (!msg) {
-        warn('message not found in chat:', uuid);
-        return false;
-      }
-      if (!msg.tmMetadata) msg.tmMetadata = {};
-      msg.tmMetadata.extCost = costData;
-      await saveChatToIDB(chatId, chat);
-      return true;
-    });
-    writeQueue = job.catch(() => {});
-    return job;
-  }
-
-  async function loadCostMapForChat(chatId) {
-    const chat = await readChatFromIDB(chatId);
-    const map = {};
-    if (!chat || !Array.isArray(chat.messages)) return map;
-    for (const msg of chat.messages) {
-      if (msg.uuid && msg.tmMetadata && msg.tmMetadata.extCost) {
-        map[msg.uuid] = msg.tmMetadata.extCost;
-      }
-    }
-    return map;
-  }
-
-  // ---------------------------------------------------------------------------
-  // In-memory cache (avoids IDB reads on every MutationObserver tick)
-  // ---------------------------------------------------------------------------
-
-  let costCache = {};
-  let cachedChatId = '';
-
-  async function getCostCache(chatId) {
-    if (chatId && chatId === cachedChatId) return costCache;
-
-    cachedChatId = chatId;
-    if (!chatId) { costCache = {}; return costCache; }
-
-    costCache = await loadCostMapForChat(chatId);
-
-    // Lazy migration from localStorage
-    migrateLegacyData(chatId);
-
-    return costCache;
-  }
-
-  function updateCostCache(uuid, data) {
-    costCache[uuid] = data;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Legacy localStorage migration
-  // ---------------------------------------------------------------------------
-
-  function migrateLegacyData(chatId) {
+  function loadStore() {
     try {
-      const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
-      if (!raw) return;
-      const legacyStore = JSON.parse(raw);
-      const legacyUuids = Object.keys(legacyStore);
-      if (legacyUuids.length === 0) {
-        localStorage.removeItem(LEGACY_STORAGE_KEY);
-        return;
-      }
-
-      // Find UUIDs in current chat that exist in legacy store
-      const responses = document.querySelectorAll('[data-element-id="ai-response"][data-message-uuid]');
-      const chatUuids = new Set();
-      for (const el of responses) {
-        chatUuids.add(el.getAttribute('data-message-uuid'));
-      }
-
-      let migratedAny = false;
-      for (const uuid of legacyUuids) {
-        if (chatUuids.has(uuid) && !costCache[uuid]) {
-          costCache[uuid] = legacyStore[uuid];
-          delete legacyStore[uuid];
-          migratedAny = true;
-        }
-      }
-
-      if (migratedAny) {
-        // Write migrated entries to IDB
-        const remaining = Object.keys(legacyStore);
-        if (remaining.length === 0) {
-          localStorage.removeItem(LEGACY_STORAGE_KEY);
-        } else {
-          localStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(legacyStore));
-        }
-        // Persist migrated data to IDB
-        for (const uuid of chatUuids) {
-          if (costCache[uuid]) {
-            saveCostEntry(chatId, uuid, costCache[uuid]).catch((err) =>
-              warn('migration write failed:', err)
-            );
-          }
-        }
-        log('migrated legacy cost data for', chatUuids.size, 'messages');
-      }
-    } catch (err) {
-      warn('legacy migration error:', err);
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    } catch {
+      return {};
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Labels visibility (stays in localStorage — UI pref, not data)
-  // ---------------------------------------------------------------------------
+  function saveEntry(uuid, data) {
+    try {
+      const store = loadStore();
+      store[uuid] = data;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    } catch (err) {
+      warn('storage write failed:', err);
+    }
+  }
 
   function areLabelsVisible() {
     return localStorage.getItem(LABELS_VISIBLE_KEY) !== 'false';
@@ -383,9 +215,8 @@
     }
   }
 
-  async function restoreAllLabels() {
-    const chatId = getCurrentChatId();
-    const store = await getCostCache(chatId);
+  function restoreAllLabels() {
+    const store = loadStore();
     const responses = document.querySelectorAll('[data-element-id="ai-response"][data-message-uuid]');
     for (const el of responses) {
       if (el.querySelector('[data-tm-cost-label]')) continue;
@@ -396,7 +227,7 @@
         if (text) injectLabelForElement(el, text);
       }
     }
-    updateTopBarButton(store);
+    updateTopBarButton();
   }
 
   function injectCostLabelOnLast(text) {
@@ -410,7 +241,8 @@
   // Top bar button: shows chat total, toggles per-message labels
   // ---------------------------------------------------------------------------
 
-  function computeChatTotal(store) {
+  function computeChatTotal() {
+    const store = loadStore();
     const responses = document.querySelectorAll('[data-element-id="ai-response"][data-message-uuid]');
     let totalCost = 0;
     let totalPrompt = 0;
@@ -431,8 +263,8 @@
     return { totalCost, totalPrompt, totalCompletion, count };
   }
 
-  function updateTopBarButton(store) {
-    const { totalCost, totalPrompt, totalCompletion, count } = computeChatTotal(store || costCache);
+  function updateTopBarButton() {
+    const { totalCost, totalPrompt, totalCompletion, count } = computeChatTotal();
     let btn = document.getElementById(TOP_BAR_BUTTON_ID);
 
     if (count === 0) {
@@ -529,29 +361,9 @@
         if (lastResponse) {
           const uuid = lastResponse.getAttribute('data-message-uuid');
           if (uuid) {
-            const chatId = getCurrentChatId();
-            updateCostCache(uuid, data);
+            saveEntry(uuid, data);
+            log('saved cost for message', uuid);
             updateTopBarButton();
-
-            // Write to IDB (async, fire-and-forget with retry for new chats)
-            const writeToIDB = (retriesLeft) => {
-              saveCostEntry(chatId, uuid, data).then((ok) => {
-                if (ok) {
-                  log('saved cost to IDB for message', uuid);
-                } else if (retriesLeft > 0) {
-                  setTimeout(() => writeToIDB(retriesLeft - 1), 1000);
-                } else {
-                  warn('failed to save cost to IDB after retries:', uuid);
-                }
-              }).catch((err) => {
-                if (retriesLeft > 0) {
-                  setTimeout(() => writeToIDB(retriesLeft - 1), 1000);
-                } else {
-                  warn('IDB write error:', err);
-                }
-              });
-            };
-            writeToIDB(5);
           }
         }
         return;
@@ -606,35 +418,6 @@
   };
 
   // ---------------------------------------------------------------------------
-  // Location watcher: detect chat switches in SPA
-  // ---------------------------------------------------------------------------
-
-  let lastSeenChatId = '';
-
-  function handleLocationChange() {
-    const currentChatId = getCurrentChatId();
-    if (currentChatId !== lastSeenChatId) {
-      lastSeenChatId = currentChatId;
-      cachedChatId = ''; // invalidate cache
-      costCache = {};
-      // Remove stale top bar button (new chat will re-render it)
-      const btn = document.getElementById(TOP_BAR_BUTTON_ID);
-      if (btn) btn.remove();
-    }
-  }
-
-  function wrapHistoryMethod(methodName) {
-    const nativeMethod = window.history[methodName];
-    if (typeof nativeMethod !== 'function') return;
-
-    window.history[methodName] = function wrappedHistoryMethod(...args) {
-      const result = nativeMethod.apply(this, args);
-      handleLocationChange();
-      return result;
-    };
-  }
-
-  // ---------------------------------------------------------------------------
   // DOM observer: restore labels when navigating between chats
   // ---------------------------------------------------------------------------
 
@@ -653,32 +436,18 @@
     });
     if (selfCaused) return;
 
-    // Check for chat switch on every DOM mutation
-    handleLocationChange();
-
     if (restoreTimer) return;
     restoreTimer = setTimeout(() => {
       restoreTimer = null;
-      restoreAllLabels().catch((err) => warn('restore error:', err));
+      restoreAllLabels();
     }, 500);
   });
 
   function start() {
-    // Init IDB connection early
-    openDB().catch((err) => warn('IDB open failed:', err));
-
-    lastSeenChatId = getCurrentChatId();
-
     if (document.body) {
       observer.observe(document.body, { subtree: true, childList: true });
-      restoreAllLabels().catch((err) => warn('initial restore error:', err));
+      restoreAllLabels();
     }
-
-    // SPA navigation detection
-    window.addEventListener('hashchange', () => handleLocationChange());
-    window.addEventListener('popstate', () => handleLocationChange());
-    wrapHistoryMethod('pushState');
-    wrapHistoryMethod('replaceState');
   }
 
   if (document.readyState === 'loading') {
