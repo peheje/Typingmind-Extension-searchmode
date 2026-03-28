@@ -78,20 +78,6 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Request patching: inject usage: { include: true }
-  // ---------------------------------------------------------------------------
-
-  function patchRequestBody(bodyText) {
-    try {
-      const body = JSON.parse(bodyText);
-      body.usage = { include: true };
-      return JSON.stringify(body);
-    } catch {
-      return bodyText;
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // SSE stream parser
   // ---------------------------------------------------------------------------
 
@@ -384,17 +370,16 @@
   window.fetch = async function patchedFetch(input, init) {
     const nextInit = init ? { ...init } : init;
 
-    const shouldPatch =
+    const shouldIntercept =
       isChatCompletionRequest(input) &&
       nextInit &&
       typeof nextInit.body === 'string' &&
       !isLikelyTitleGenerationRequest(nextInit.body);
 
-    if (!shouldPatch) {
+    if (!shouldIntercept) {
       return nativeFetch(input, nextInit);
     }
 
-    nextInit.body = patchRequestBody(nextInit.body);
     const response = await nativeFetch(input, nextInit);
 
     if (!response.body || !response.ok) {
