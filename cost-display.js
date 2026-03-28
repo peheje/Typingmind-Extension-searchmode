@@ -1,14 +1,42 @@
 // == TypingMind Extension: OpenRouter per-message cost display ================
 // Intercepts streaming responses to capture usage/cost data from OpenRouter
 // and displays it inline after each assistant message.
-// v0.1 - 2026-03-28
+// Persists cost data in localStorage keyed by message UUID.
+// v0.2 - 2026-03-28
 (() => {
   const PREFIX = '[cost-display]';
   const log = (...args) => console.log(PREFIX, ...args);
   const warn = (...args) => console.warn(PREFIX, ...args);
 
+  const STORAGE_KEY = 'TM_costDisplayData';
   const CHAT_COMPLETIONS_URL_PATTERN = /\/chat\/completions(?:[/?#]|$)/;
   const TITLE_GEN_MARKER = '[[tm-title-gen]]';
+
+  // ---------------------------------------------------------------------------
+  // Storage: { [messageUuid]: { cost, prompt_tokens, completion_tokens, model, provider } }
+  // ---------------------------------------------------------------------------
+
+  function loadStore() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  function saveEntry(uuid, data) {
+    try {
+      const store = loadStore();
+      store[uuid] = data;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    } catch (err) {
+      warn('storage write failed:', err);
+    }
+  }
+
+  function getEntry(uuid) {
+    return loadStore()[uuid] || null;
+  }
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -64,35 +92,24 @@
 
   function wrapStreamForUsage(readableStream, onUsage) {
     let lineBuf = '';
-    let chunkCount = 0;
 
     const transform = new TransformStream({
       transform(chunk, controller) {
-        // Always pass through unchanged
         controller.enqueue(chunk);
-        chunkCount++;
-
-        // Also parse for usage data
         try {
           const text = new TextDecoder().decode(chunk, { stream: true });
-          if (chunkCount <= 2) log('stream chunk #' + chunkCount + ' (first 200):', text.slice(0, 200));
           lineBuf += text;
 
-          // Process complete lines
           const lines = lineBuf.split('\n');
-          // Keep the last (possibly incomplete) line in the buffer
           lineBuf = lines.pop() || '';
 
           for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed.startsWith('data: ') || trimmed === 'data: [DONE]') continue;
 
-            const json = trimmed.slice(6); // strip 'data: '
             try {
-              const parsed = JSON.parse(json);
-              // Usage chunk: choices is empty array, usage object present
+              const parsed = JSON.parse(trimmed.slice(6));
               if (parsed.usage && typeof parsed.usage === 'object') {
-                log('found usage in chunk:', JSON.stringify(parsed.usage));
                 onUsage(parsed);
               }
             } catch {
@@ -104,15 +121,13 @@
         }
       },
 
-      flush(controller) {
-        // Process any remaining data in buffer
+      flush() {
         if (lineBuf.trim()) {
           const trimmed = lineBuf.trim();
           if (trimmed.startsWith('data: ') && trimmed !== 'data: [DONE]') {
             try {
               const parsed = JSON.parse(trimmed.slice(6));
               if (parsed.usage && typeof parsed.usage === 'object') {
-                log('found usage in chunk:', JSON.stringify(parsed.usage));
                 onUsage(parsed);
               }
             } catch {
@@ -128,7 +143,7 @@
   }
 
   // ---------------------------------------------------------------------------
-  // UI: inject cost label after the last assistant message
+  // UI: inject cost labels
   // ---------------------------------------------------------------------------
 
   function formatCost(cost) {
@@ -144,60 +159,70 @@
     return String(n);
   }
 
-  function buildCostLabel(usage, model, provider) {
+  function buildCostText(data) {
     const parts = [];
 
-    if (usage.cost != null) {
-      parts.push(formatCost(usage.cost));
+    if (data.cost != null) {
+      parts.push(formatCost(data.cost));
     }
 
-    const prompt = usage.prompt_tokens;
-    const completion = usage.completion_tokens;
-    if (prompt != null || completion != null) {
-      const p = formatTokens(prompt) || '?';
-      const c = formatTokens(completion) || '?';
+    if (data.prompt_tokens != null || data.completion_tokens != null) {
+      const p = formatTokens(data.prompt_tokens) || '?';
+      const c = formatTokens(data.completion_tokens) || '?';
       parts.push(`${p} → ${c}`);
     }
 
-    if (provider) {
-      parts.push(provider);
+    if (data.provider) {
+      parts.push(data.provider);
     }
 
     return parts.join(' · ');
   }
 
-  function injectCostLabel(text) {
-    // Find the last assistant message container in the chat
-    // TypingMind uses data-element-id="ai-response" for assistant messages
-    const responses = document.querySelectorAll('[data-element-id="ai-response"]');
-    if (responses.length === 0) {
-      log('no ai-response elements found, retrying...');
-      return false;
-    }
+  const LABEL_STYLE = [
+    'font-size: 11px',
+    'color: #8899a6',
+    'margin-top: 4px',
+    'padding: 2px 0',
+    'font-family: ui-monospace, monospace',
+    'opacity: 0.8',
+    'user-select: all'
+  ].join(';');
 
-    const lastResponse = responses[responses.length - 1];
-
-    // Don't double-inject
-    if (lastResponse.querySelector('[data-tm-cost-label]')) {
-      const existing = lastResponse.querySelector('[data-tm-cost-label]');
-      existing.textContent = text;
-      return true;
+  function injectLabelForElement(el, text) {
+    if (el.querySelector('[data-tm-cost-label]')) {
+      el.querySelector('[data-tm-cost-label]').textContent = text;
+      return;
     }
 
     const label = document.createElement('div');
     label.setAttribute('data-tm-cost-label', 'true');
     label.textContent = text;
-    label.style.cssText = [
-      'font-size: 11px',
-      'color: #8899a6',
-      'margin-top: 4px',
-      'padding: 2px 0',
-      'font-family: ui-monospace, monospace',
-      'opacity: 0.8',
-      'user-select: all'
-    ].join(';');
+    label.style.cssText = LABEL_STYLE;
+    el.appendChild(label);
+  }
 
-    lastResponse.appendChild(label);
+  // Restore labels for all visible ai-response elements that have stored data
+  function restoreAllLabels() {
+    const store = loadStore();
+    const responses = document.querySelectorAll('[data-element-id="ai-response"][data-message-uuid]');
+    for (const el of responses) {
+      if (el.querySelector('[data-tm-cost-label]')) continue; // already has label
+      const uuid = el.getAttribute('data-message-uuid');
+      const data = store[uuid];
+      if (data) {
+        const text = buildCostText(data);
+        if (text) injectLabelForElement(el, text);
+      }
+    }
+  }
+
+  // Inject label on the last ai-response (used right after a response finishes)
+  function injectCostLabelOnLast(text) {
+    const responses = document.querySelectorAll('[data-element-id="ai-response"]');
+    if (responses.length === 0) return false;
+    const lastResponse = responses[responses.length - 1];
+    injectLabelForElement(lastResponse, text);
     return true;
   }
 
@@ -206,20 +231,39 @@
     const model = parsed.model || '';
     const provider = parsed.provider || '';
 
-    const text = buildCostLabel(usage, model, provider);
+    const data = {
+      cost: usage.cost,
+      prompt_tokens: usage.prompt_tokens,
+      completion_tokens: usage.completion_tokens,
+      model,
+      provider
+    };
+
+    const text = buildCostText(data);
     if (!text) return;
 
-    log('usage:', usage, 'model:', model, 'provider:', provider);
+    log('usage:', data);
 
-    // Retry a few times since the DOM may not be fully updated yet
+    // Inject into DOM with retries (DOM may not be ready yet)
     let attempts = 0;
     const tryInject = () => {
-      if (injectCostLabel(text)) return;
+      if (injectCostLabelOnLast(text)) {
+        // Now find the UUID from the element we just injected into, and persist
+        const responses = document.querySelectorAll('[data-element-id="ai-response"]');
+        const lastResponse = responses[responses.length - 1];
+        if (lastResponse) {
+          const uuid = lastResponse.getAttribute('data-message-uuid');
+          if (uuid) {
+            saveEntry(uuid, data);
+            log('saved cost for message', uuid);
+          }
+        }
+        return;
+      }
       if (++attempts < 10) {
         setTimeout(tryInject, 300);
       }
     };
-    // Small delay to let TypingMind finish rendering the message
     setTimeout(tryInject, 200);
   }
 
@@ -242,24 +286,13 @@
       return nativeFetch(input, nextInit);
     }
 
-    // Inject usage: { include: true } into request
     nextInit.body = patchRequestBody(nextInit.body);
-    log('patched request, url:', getRequestUrl(input));
-
     const response = await nativeFetch(input, nextInit);
-
-    log(
-      'response ok:', response.ok,
-      'status:', response.status,
-      'has body:', !!response.body,
-      'content-type:', response.headers.get('content-type')
-    );
 
     if (!response.body || !response.ok) {
       return response;
     }
 
-    // Wrap the body to intercept usage chunk (works for both streaming and non-streaming)
     try {
       const wrappedBody = wrapStreamForUsage(response.body, (parsed) => {
         showUsage(parsed);
@@ -277,8 +310,25 @@
   };
 
   // ---------------------------------------------------------------------------
-  // Start
+  // DOM observer: restore labels when navigating between chats
   // ---------------------------------------------------------------------------
+
+  const observer = new MutationObserver(() => {
+    restoreAllLabels();
+  });
+
+  function start() {
+    if (document.body) {
+      observer.observe(document.body, { subtree: true, childList: true });
+      restoreAllLabels();
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', start);
+  } else {
+    start();
+  }
 
   log('extension loaded');
 })();
