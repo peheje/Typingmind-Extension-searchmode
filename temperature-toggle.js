@@ -81,14 +81,14 @@
       tooltip: 'Temperature: 0.0 (precise). Click to set 0.3. Alt+T to cycle.',
       title: 'Temperature 0.0',
       buttonStyle: Object.freeze({
-        backgroundColor: '#2563eb',
-        color: '#ffffff',
+        backgroundColor: 'transparent',
+        color: '',
         boxShadow: ''
       }),
       badge: Object.freeze({
         text: '0.0',
         backgroundColor: '#ffffff',
-        color: '#2563eb'
+        color: '#6b7280'
       })
     }),
     [TEMP.LOW]: Object.freeze({
