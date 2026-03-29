@@ -9,10 +9,8 @@
   const warn = (...args) => console.warn(PREFIX, ...args);
 
   const STORAGE_KEY = 'TM_costDisplayData';
-  const LABELS_VISIBLE_KEY = 'TM_costDisplayShowLabels';
   const CHAT_COMPLETIONS_URL_PATTERN = /\/chat\/completions(?:[/?#]|$)/;
   const TITLE_GEN_MARKER = '[[tm-title-gen]]';
-  const TOP_BAR_BUTTON_ID = 'tm-cost-topbar-button';
 
   // IDB constants
   const IDB_DB_NAME = 'keyval-store';
@@ -44,14 +42,6 @@
     } catch (err) {
       warn('storage write failed:', err);
     }
-  }
-
-  function areLabelsVisible() {
-    return localStorage.getItem(LABELS_VISIBLE_KEY) !== 'false';
-  }
-
-  function setLabelsVisible(visible) {
-    localStorage.setItem(LABELS_VISIBLE_KEY, String(visible));
   }
 
   // ---------------------------------------------------------------------------
@@ -390,11 +380,9 @@
   ].join(';');
 
   function injectLabelForElement(el, text) {
-    const visible = areLabelsVisible();
     const existing = el.querySelector('[data-tm-cost-label]');
     if (existing) {
       existing.textContent = text;
-      existing.style.display = visible ? '' : 'none';
       return;
     }
 
@@ -402,16 +390,7 @@
     label.setAttribute('data-tm-cost-label', 'true');
     label.textContent = text;
     label.style.cssText = LABEL_STYLE;
-    if (!visible) label.style.display = 'none';
     el.appendChild(label);
-  }
-
-  function applyLabelVisibility() {
-    const visible = areLabelsVisible();
-    const labels = document.querySelectorAll('[data-tm-cost-label]');
-    for (const label of labels) {
-      label.style.display = visible ? '' : 'none';
-    }
   }
 
   function restoreAllLabels() {
@@ -426,7 +405,6 @@
         if (text) injectLabelForElement(el, text);
       }
     }
-    updateTopBarButton();
   }
 
   function injectCostLabelOnLast(text) {
@@ -462,74 +440,6 @@
     return { totalCost, totalPrompt, totalCompletion, count };
   }
 
-  function updateTopBarButton() {
-    const { totalCost, totalPrompt, totalCompletion, count } = computeChatTotal();
-    let btn = document.getElementById(TOP_BAR_BUTTON_ID);
-
-    if (count === 0) {
-      if (btn) btn.remove();
-      return;
-    }
-
-    const costText = formatCost(totalCost) || '$0';
-    const tooltip = [
-      `Chat total: ${costText}`,
-      `${formatTokens(totalPrompt)} → ${formatTokens(totalCompletion)}`,
-      `${count} message${count !== 1 ? 's' : ''}`,
-      areLabelsVisible() ? 'Click to hide per-message costs' : 'Click to show per-message costs'
-    ].join(' · ');
-
-    if (btn) {
-      const span = btn.querySelector('span');
-      if (span) span.textContent = costText;
-      btn.setAttribute('data-tooltip-content', tooltip);
-      btn.setAttribute('title', tooltip);
-      btn.style.opacity = areLabelsVisible() ? '1' : '0.5';
-      return;
-    }
-
-    // Find anchor: the "More actions" dropdown button in the top bar
-    const moreActionsBtn = document.querySelector(
-      '[data-element-id="current-chat-title"] [data-tooltip-content="More actions"]'
-    );
-    if (!moreActionsBtn) return;
-    // The button is inside a wrapper div, insert before the wrapper
-    const aboutBtn = moreActionsBtn.closest('div[data-headlessui-state]') || moreActionsBtn;
-    if (!aboutBtn.parentElement) return;
-
-    btn = document.createElement('button');
-    btn.id = TOP_BAR_BUTTON_ID;
-    btn.className = [
-      'gap-2 h-9 w-auto px-2 rounded-lg',
-      'text-slate-900 dark:text-white',
-      'inline-flex items-center justify-center shrink-0 relative',
-      'dark:hover:bg-white/20 dark:active:bg-white/25',
-      'hover:bg-slate-900/20 active:bg-slate-900/25',
-      'focus-visible:outline-offset-2 focus-visible:outline-slate-500',
-      'transition-all'
-    ].join(' ');
-    btn.setAttribute('data-tooltip-id', 'global');
-    btn.setAttribute('data-tooltip-content', tooltip);
-    btn.setAttribute('title', tooltip);
-    btn.style.opacity = areLabelsVisible() ? '1' : '0.5';
-
-    const span = document.createElement('span');
-    span.className = 'text-slate-500 dark:text-slate-400 text-xs font-normal';
-    span.style.fontFamily = 'ui-monospace, monospace';
-    span.textContent = costText;
-    btn.appendChild(span);
-
-    btn.addEventListener('click', () => {
-      const nowVisible = !areLabelsVisible();
-      setLabelsVisible(nowVisible);
-      applyLabelVisibility();
-      updateTopBarButton();
-      log('labels', nowVisible ? 'shown' : 'hidden');
-    });
-
-    aboutBtn.insertAdjacentElement('beforebegin', btn);
-  }
-
   // ---------------------------------------------------------------------------
   // showUsage: called when stream parser finds usage data
   // ---------------------------------------------------------------------------
@@ -562,7 +472,6 @@
           if (uuid) {
             saveEntry(uuid, data);
             log('saved cost for message', uuid);
-            updateTopBarButton();
             // Immediate IDB sync — don't wait for next poll cycle
             syncTokenUsage().catch(err => idbWarn('immediate sync failed:', err));
           }
@@ -626,10 +535,9 @@
     // Ignore mutations caused by our own elements
     const selfCaused = mutations.every((m) => {
       for (const node of m.addedNodes) {
-        if (node.nodeType === 1 && (
-          node.hasAttribute?.('data-tm-cost-label') ||
-          node.id === TOP_BAR_BUTTON_ID
-        )) continue;
+        if (node.nodeType === 1 &&
+          node.hasAttribute?.('data-tm-cost-label')
+        ) continue;
         return false;
       }
       return m.addedNodes.length > 0;
